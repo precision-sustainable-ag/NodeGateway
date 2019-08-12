@@ -1,0 +1,2 @@
+﻿terminal_tab = 1	//if set (non-zero) will show terminal tab by default when application loads
+firmware_tab = 1	//if set (non-zero) will show firmware tab by default when application loads
