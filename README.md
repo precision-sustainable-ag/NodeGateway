@@ -232,7 +232,7 @@ The three TDR310S sensors should be installed in a hole depth of 10, 40 and 75 c
 
 |                                                              |                                                              |                                                              |                                                              |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| ![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image3.png "sensor placement diagram") | ![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image2.png "sensor placement diagram") | ![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image5.png "sensor placement diagram") | ![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image4.png "sensor placement diagram") |
+| ![](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image3.png) | ![](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image2.png) | ![](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image5.png) | ![](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image4.png) |
 
 
 ![alt_text](images/PSA-Field2.jpg "image_tooltip")
