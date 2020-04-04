@@ -228,14 +228,10 @@ The three TDR310S sensors should be installed in a hole depth of 10, 40 and 75 c
 1. Use the flight auger to dig the first hole (29 ½”). Measure to be sure the depth is correct. If the hole is too deep, add a small amount of soil back into the hole and pack it with a wooden dowel or another item with a flat end. Once the hole is at the depth you need, insert the sensor into the hole. 
 2. Slowly push the sensor into the hole until it firmly contacts the bottom of the hole. You may need to use a rubber mallet to drive the sensor and PVC pipe into the ground. Be careful not to use excessive force.  Once seated at the bottom of the hole, check the depth by looking at the mark on the PVC pipe.  If it is not correct, record the depth by measuring from the top of the PVC pipe to the soil surface or reinstall the sensor.  Slip the cable into the slot at the top of the pipe and put the cap on.
 
+![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image1.png "sensor placement diagram")
 
 
-<p id="gdcalert1" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field0.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert2">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image1.png) "sensor placement diagram"
-
-
-![alt_text](/blob/master/images/image1.png "image_tooltip")
+![image2](C:\Users\screberg\Documents\GitHub\NodeGateway\images\image2.jpg)
 
 
 <p id="gdcalert2" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field1.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert3">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
