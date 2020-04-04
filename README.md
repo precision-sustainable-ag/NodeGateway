@@ -232,8 +232,10 @@ The three TDR310S sensors should be installed in a hole depth of 10, 40 and 75 c
 
 <p id="gdcalert1" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field0.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert2">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
 
+![](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image1.png)
 
-![alt_text](images/PSA-Field0.jpg "image_tooltip")
+
+![alt_text](/blob/master/images/image1.png "image_tooltip")
 
 
 <p id="gdcalert2" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field1.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert3">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
