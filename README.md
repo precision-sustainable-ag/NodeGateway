@@ -73,6 +73,8 @@ This document describes the installation of gateways and nodes in the field. Eac
 
 The three TDR310S sensors should be installed in a hole depth of 10, 40 and 75 cm (4, 15.75, and 29.5 inches) below the soil surface. The PVC pipes glued to the sensors are already marked with a piece of tape indicating the depth to which it should be installed. 
 
+![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image1.png "sensor placement diagram")
+
 **Table 1. PVC pipe lengths for each depth sensor based on using one 10ft PVC pipe per field location**.  
 
 
@@ -228,19 +230,9 @@ The three TDR310S sensors should be installed in a hole depth of 10, 40 and 75 c
 1. Use the flight auger to dig the first hole (29 ½”). Measure to be sure the depth is correct. If the hole is too deep, add a small amount of soil back into the hole and pack it with a wooden dowel or another item with a flat end. Once the hole is at the depth you need, insert the sensor into the hole. 
 2. Slowly push the sensor into the hole until it firmly contacts the bottom of the hole. You may need to use a rubber mallet to drive the sensor and PVC pipe into the ground. Be careful not to use excessive force.  Once seated at the bottom of the hole, check the depth by looking at the mark on the PVC pipe.  If it is not correct, record the depth by measuring from the top of the PVC pipe to the soil surface or reinstall the sensor.  Slip the cable into the slot at the top of the pipe and put the cap on.
 
-![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image1.png "sensor placement diagram")
-
-
-![image2](C:\Users\screberg\Documents\GitHub\NodeGateway\images\image2.jpg)
-
-
-<p id="gdcalert2" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field1.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert3">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](images/PSA-Field1.jpg "image_tooltip")
-
-
-<p id="gdcalert3" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field2.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert4">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
+|                                                              |                                                              |                                                              |                                                              |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| ![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image3.png "sensor placement diagram") | ![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image2.png "sensor placement diagram") | ![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image5.png "sensor placement diagram") | ![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image4.png "sensor placement diagram") |
 
 
 ![alt_text](images/PSA-Field2.jpg "image_tooltip")
