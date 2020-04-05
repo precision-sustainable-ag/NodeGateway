@@ -256,7 +256,7 @@ The three TDR310S sensors should be installed in a hole depth of 10, 40 and 75 c
 
 8. Seal the clamps and the cables with putty. 
 
-![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image14.jpg "Cable Clamps Sealed with Putty")
+![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image14.png "Cable Clamps Sealed with Putty")
 
 Placement of the Gateway in the field is of utmost importance to its successful operation. The most important factor to consider is line-of-sight. For the Nodes to communicate with the Gateway they must be within “line-of-sight” which means you should be able to see one from the other either with the naked eye or binoculars. Obstructions like hills or buildings will block the radio transmissions though plant structures like corn or trees should not interfere much. 
 
