@@ -233,100 +233,30 @@ The three TDR310S sensors should be installed in a hole depth of 10, 40 and 75 c
 |                                                              |                                                              |                                                              |                                                              |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | ![](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image3.jpg) | ![](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image2.jpg) | ![](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image5.jpg) | ![](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image4.jpg) |
-https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image1.png
+3. Slip the gasket down the pipe until it is flush with the soil surface. The rubber gasket is to divert water from the pipe and nearby soil to reduce side wall flow. ()
 
-![alt_text](images/PSA-Field2.jpg "image_tooltip")
-
-
-<p id="gdcalert4" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field3.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert5">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](images/PSA-Field3.jpg "image_tooltip")
-
-
- _ Installation of TDR310S Sensor_
-
-
-
-3. Slip the gasket down the pipe until it is flush with the soil surface. The rubber gasket is to divert water from the pipe and nearby soil to reduce side wall flow. 
-
-
-
-<p id="gdcalert5" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field4.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert6">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](images/PSA-Field4.jpg "image_tooltip")
-
-
-_Rubber Gasket on TDR310S_
-
-
+![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image7.jpg "Rubber Gasket on TDR310S")
 
 4. Repeat steps 2 and 3 for the other two sensors and their depths.
 5. The CS655 soil water sensor is installed under the decomposition bag #5 horizontally, 5 cm below the soil surface.  Use a hand trowel to excavate a rectangular pit for the sensor. Reserve the soil removed from the pit off to the side (a piece of plastic sheeting or cardboard is helpful).  Use the hand hoe and mallet to cut a straight wall on one narrow end of the pit. Measure the depth in several places to be sure it is slightly greater than 2 inches. Level the bottom with the hand hoe. 
 
+​	
 
-
-<p id="gdcalert6" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field5.png). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert7">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](images/PSA-Field5.png "image_tooltip")
-
-
-<p id="gdcalert7" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field6.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert8">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](images/PSA-Field6.jpg "image_tooltip")
-
-
-<p id="gdcalert8" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field7.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert9">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](images/PSA-Field7.jpg "image_tooltip")
-
-
-_CS655 Installation Part I_
-
-
+|                                                              |                                                              |                                                              |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| ![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image6.png "CS655 Installation Part I") | ![](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image9.jpg) | ![](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image8.jpg) |
 
 6. Place the sensor inside the pit, and holding the probes straight, push the sensor into the side wall. Be careful to not bend or splay the probes. Fill in the pit with the soil you removed. 
 
+|                                                              |                                                              |                                                              |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| ![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image13.jpg "CS655 Installation Part I") | ![img](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image11.jpg) | ![img](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image12.jpg) |
 
+7. Place the temperature sensor on the soil under the litter bag that will be removed last from the field.   
 
-<p id="gdcalert9" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field8.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert10">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](images/PSA-Field8.jpg "image_tooltip")
-
-
-<p id="gdcalert10" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field9.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert11">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](images/PSA-Field9.jpg "image_tooltip")
-
-
-<p id="gdcalert11" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field10.jpg). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert12">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](images/PSA-Field10.jpg "image_tooltip")
-
-
- _ CS655 Installation Part II_
-
-
-
-7. Place the temperature sensor on the soil under the litter bag that is will be removed last from the field.   
 8. Seal the clamps and the cables with putty. 
 
-
-
-<p id="gdcalert12" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/PSA-Field11.png). Store image on your image server and adjust path/filename if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert13">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](images/PSA-Field11.png "image_tooltip")
-
-
-_Cable Clamps Sealed with Putty_
+![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image13.jpg "Cable Clamps Sealed with Putty")
 
 Placement of the Gateway in the field is of utmost importance to its successful operation. The most important factor to consider is line-of-sight. For the Nodes to communicate with the Gateway they must be within “line-of-sight” which means you should be able to see one from the other either with the naked eye or binoculars. Obstructions like hills or buildings will block the radio transmissions though plant structures like corn or trees should not interfere much. 
 
