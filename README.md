@@ -73,7 +73,7 @@ This document describes the installation of gateways and nodes in the field. Eac
 
 The three TDR310S sensors should be installed in a hole depth of 10, 40 and 75 cm (4, 15.75, and 29.5 inches) below the soil surface. The PVC pipes glued to the sensors are already marked with a piece of tape indicating the depth to which it should be installed. 
 
-![alt_text](https://github.com/precision-sustainable-ag/NodeGateway/blob/master/images/image1.png "sensor placement diagram")
+![alt_text](images/image1.png "sensor placement diagram")
 
 **Table 1. PVC pipe lengths for each depth sensor based on using one 10ft PVC pipe per field location**.  
 
@@ -232,7 +232,7 @@ The three TDR310S sensors should be installed in a hole depth of 10, 40 and 75 c
 
 |                        |                        |                        |                        |
 | ---------------------- | ---------------------- | ---------------------- | ---------------------- |
-| ![](images\image3.jpg) | ![](images/image2.jpg) | ![](images/image5.jpg) | ![](images/image4.jpg) |
+| ![](images/image3.jpg) | ![](images/image2.jpg) | ![](images/image5.jpg) | ![](images/image4.jpg) |
 3. Slip the gasket down the pipe until it is flush with the soil surface. The rubber gasket is to divert water from the pipe and nearby soil to reduce side wall flow. ()
 
 ![alt_text](images/image7.jpg "Rubber Gasket on TDR310S")
