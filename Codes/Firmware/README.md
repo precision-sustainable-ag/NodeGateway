@@ -1,4 +1,4 @@
-# Node-Gateway - CROWN-V2-AIT
+# Node-Gateway
 -----------
 **NOTE: Users must edit HardwareSerial.h to use configuration strings longer than 64 characters**
 
