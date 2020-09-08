@@ -1,8 +1,7 @@
 
-/* CROWN-V2-AIT Gateway  
+/*PSA Cellular Gateway  
   
-  Acclima Cooperative - Cellular Gateway
-    Components:
+   Main Components:
       - ATMega1284P with MoteinoMEGA core
       - DS3231 Precision RTC
       - LoRa radio transceiver
@@ -36,6 +35,8 @@
    
    Last edited: June 22, 2020
 
+   - Version History -
+    
    Version 2020.05.06 fixes the retries for NISTtime() during fieldSync()
    Version 2020.05.08 fixes initialization message when Gateway fails to sync with at least one Node
    Version 2020.05.14 fine tunes initial synchronization and daily sync check
@@ -59,8 +60,6 @@
 #include "avr/io.h"
 #include "avr/interrupt.h"
 #include "avr/wdt.h"                               // controls watchdog timer (we want to turn it off)
-#include "SetSpeed.h"                              //John, 27-Mar-2019: Required to slow MCU speed to 8 MHz using a prescaler
-
 
 // ------- Assign Pins ----------------------------------------------------
 
@@ -85,13 +84,9 @@
   #define pin_solarShort      A4
   #define SOLAR_CALIB         1.0          //This will become a EEPROM constant that is set during factory config – for now just use 1.0
 
-  char VERSION[] = "V2020.08.06";
-
-
-
 // ------- Declare Variables -----------------------------------------------
-
-  SetSpeed ss;  //John, 27-Mar-2019: Special creation of a dummy SetSpeed object to invoke prescaler on MCU as soon as possible
+  
+  char VERSION[] = "V2020.08.06";
 
 //-----*** Site/Gateway Identifier ***-----
 
@@ -268,7 +263,6 @@
   File IDfile;    // initialize object for sensor list file
   File root;      // initialize dummy root file
 
-
 //===========================================================================================
 
 //-------------- Setup ----------------------------------------------------------------------
@@ -337,15 +331,7 @@ void setup()
       Serial.println("ERROR: radio init failed");
       return;
     }
-
-  //--- Read variables from memory ---
-        
-//    interval = EEPROM.read(EEPROM_ALRM1_INT); 
-//    numNodes = EEPROM.read(EEPROM_NODE_COUNT);
-//    uploadInt = EEPROM.read(EEPROM_ALRM2_INT);
-//    EEPROM.get(EEPROM_DEVKEY, devicekey);
-//    EEPROM.get(EEPROM_NODEIDS, NodeIDs);
-   
+  
   //--- Go to main menu for setup
     
     MainMenu();
@@ -388,7 +374,6 @@ void setup()
     delay(50);
 
 }
-
 
 //======================================================================================
 //======================================================================================
@@ -635,24 +620,6 @@ void fieldSync(){
       delay(1000);
     }
   } 
-
-  //--- Step 4: Trigger measurement from Nodes
-
-/* 13May20 test  
-  uint8_t ok[2];
-  uint8_t okLen = 2;
-  uint8_t node;
-  uint8_t stopNow[1];
-      
-  stopNow[0] = GatewayID; 
-  
-  for (byte y = 0; y < numNodes; y++){       
-    uint8_t to = NodeIDs[y];
-    Serial.println(stopNow[0]);
-    if (LoRa.sendtoWait(stopNow, 1, to)) {                      // send message to Nodes to stop listening, triggers them to take measurement
-      LoRa.recvfromAckTimeout(ok, &okLen, timeoutACK, &node);   // receive ack from Node
-    }
-  }  */
 
   Serial.println("Done"); 
 }
@@ -970,36 +937,6 @@ void setAlarm2(){
     if (hrs + 2 == NISThr){    // if next alarm should be time to get NIST time
         alarm2Hrs = NISThr%24;
         alarm2Mins = NISTmin;  
-
-        /*if(duringInit){
-            byte nextDay;
-          
-            if ((mnths == 4) || (mnths == 6) || (mnths == 9) || (mnths == 11)) {  // to rollover into a new month
-              if (days == 30) {
-                nextDay = 1;
-              } else {
-                nextDay = days + 1;
-              }
-            }
-            else if (mnths == 2) {
-              if (days == 29) {   // check for leap year
-                nextDay = 1;
-              } else if ((days == 28) && (yrs % 4 != 0)) {
-                nextDay = 1;
-              } else {
-                nextDay = days + 1;
-              }
-            }
-            else if (days == 31) {
-              nextDay = 1;
-            }
-            else {
-              nextDay = days + 1;
-            }
-            
-            RTC.setAlarm(ALM2_MATCH_DATE, 0, alarm2Mins, alarm2Hrs, nextDay); // 15Jun2020: change 0 to nextDay
-            alarmSet = true;
-        } */
       }
       else if (hrs == (NISThr%24)){               // alarm after getting NIST time
         alarm2Hrs = (hrs + 2)%24;
@@ -1012,37 +949,7 @@ void setAlarm2(){
   } else if (uploadInt == 1){                    // if upload interval is every hour
     if (hrs == NISThr && mins < NISTmin){        // if next alarm should be time to get NIST time
         alarm2Hrs = NISThr;
-        alarm2Mins = NISTmin;
-
-       /* if(duringInit){
-          byte nextDay;
-      
-          if ((mnths == 4) || (mnths == 6) || (mnths == 9) || (mnths == 11)) {  // to rollover into a new month
-            if (days == 30) {
-              nextDay = 1;
-            } else {
-              nextDay = days + 1;
-            }
-          }
-          else if (mnths == 2) {
-            if (days == 29) {   // check for leap year
-              nextDay = 1;
-            } else if ((days == 28) && (yrs % 4 != 0)) {
-              nextDay = 1;
-            } else {
-              nextDay = days + 1;
-            }
-          }
-          else if (days == 31) {
-            nextDay = 1;
-          }
-          else {
-            nextDay = days + 1;
-          }
-          
-          RTC.setAlarm(ALM2_MATCH_DATE, 0, alarm2Mins, alarm2Hrs, nextDay); // 15Jun2020: change 0 to nextDay
-          alarmSet = true;
-       }*/
+        alarm2Mins = NISTmin;     
     } else if (hrs == NISThr && mins >= NISTmin){ // alarm after getting NIST time
         alarm2Hrs = (NISThr%24)+1;
         alarm2Mins = 4;
@@ -1282,7 +1189,6 @@ void saveData() {
     Serial.println("ERROR: Failed to Open SD. Sending Data Now...");
     sendDataArray();        // upload data immediately to Hologram if SD fails
   }
-
 }
 
 //======================================================================================
@@ -1602,18 +1508,7 @@ void sendDataArray() {
     float boxTemp = getBoxT();    // added 14-Feb-2020
   
   char aux_str2[FONA_MSG_SIZE];
-  
- /* char IPs[2][14] ={"18.206.138.90","34.206.148.15"};
-  char ipaddr[14];
-   
-  long y = random(0,4);  
-
-  for(byte u = 0; u < 14; u++){
-    ipaddr[u]=IPs[y][u];
-//    Serial.print(IPs[y][u]);
-  }*/
-  
-        
+         
   fonaOn();
   delay(3000);
         
@@ -1670,12 +1565,6 @@ void sendDataArray() {
   if (gStatus == 1) {
     Serial.println("sendDataArray(): Sending data from array...");
     // Send node data          
-//     char tcpinit[] = "AT+CIPOPEN=0,\"TCP\",";     
-//     sprintf(aux_str,"%s\"%s\",9999",tcpinit,ipaddr);
-//     Serial.println();
-//     Serial.print(">> ");
-//     Serial.println(aux_str);
-
     char tcpinit[] = "AT+CIPOPEN=0,\"TCP\",\"cloudsocket.hologram.io\",9999";
      answer = sendATcommand(tcpinit,"OK\r\n\r\n+CIPOPEN: 0,0",20000); // needs longer timeout?
         memset(aux_str,0,sizeof(aux_str));
@@ -1944,7 +1833,6 @@ boolean startGPRS(boolean onoff){
     return false;
    
   }
-
 }
 
 //======================================================================================
@@ -2116,7 +2004,7 @@ bool isSubstring(char substr[100], char str[100]) {
 
 //--------------- Solar panel ---------------------------------------------
 
-// float getMOSFETresistance(float temp, float voltSD) {
+/*// float getMOSFETresistance(float temp, float voltSD) {
 //   //NOTE: This is based on datasheet graphs but has empirical compensation as well
 //   //returns SSM3K376R MOSFET resistance (in Ohms) as a function of temperature and [pre]source-drain voltage (assuming 3-volt gate-source voltage) 
   
@@ -2132,6 +2020,7 @@ bool isSubstring(char substr[100], char str[100]) {
 //     adjusted = 0;
 //   return adjusted;
 // }
+*/
 
 //Returns voltage of solar cell in volts (battery load may affect voltage)
 float getSolarVoltage() {
@@ -2285,7 +2174,7 @@ void MainMenu()
   Serial.println(F("   n  <--  Enter Node radio IDs")); 
   Serial.println(F("   u  <--  Set data upload to cloud interval"));
   Serial.println(F("   m  <--  Set measurement interval"));
-  Serial.println(F("   S  <--  Synchronize Gateway & Node clocks"));
+//  Serial.println(F("   S  <--  Synchronize Gateway & Node clocks"));
   Serial.println(F("   f  <--  See list of saved files"));
 //  Serial.println(F("   s  <--  See sensor list"));
   Serial.println(F("   p  <--  Print node data to screen"));
@@ -2371,7 +2260,7 @@ void MainMenu()
       MainMenu();
       break;
 
-    case 83:    // ------ S -Synchronize G & N clocks ---------------------------------------------
+    /*case 83:    // ------ S -Synchronize G & N clocks ---------------------------------------------
       Serial.println();
       Serial.println(F("Make sure same Node menu option open in another Serial Monitor window"));
       Serial.println(F("Sending time to Node..."));
@@ -2379,7 +2268,7 @@ void MainMenu()
       delay(500);
       MainMenu();
       break;
-      
+      */
     
     case 102: case 70:          // ------ f - See list of saved files ---------------------------------------------
       Serial.println();
@@ -2613,7 +2502,6 @@ void decodeConfig(char config_string[55]){
     Serial.print("device key: ");
     Serial.println(devicekey);    
   }
-
 
   //--- get Gateway ID
 
@@ -2867,7 +2755,6 @@ boolean measureInt(){
   }
 }
 
-
 void NISTsync(){
   Serial.println(F("Synchronizing clock to NIST server ... "));
       fonaOn();
@@ -3070,7 +2957,6 @@ void printDirectory(File dir, int numTabs) {
 
 //--------------- Erase SD -------------------------------------------------------------
 
-
 void rm(File dir, String tempPath) {
   while (true) {
     File entry =  dir.openNextFile();
@@ -3128,9 +3014,9 @@ void rm(File dir, String tempPath) {
 }
 //======================================================================================
 
-//--------------- Sync G & N clocks ----------------------------------------------------
+//--------------- Sync G & N clocks [NOT USED] ----------------------------------------------------
 
-void syncTime(){
+/*void syncTime(){
 //   if (!manager.init()) {                      // initialize radio
 //    Serial.println("Radio failed");
 //  }
@@ -3171,7 +3057,7 @@ void syncTime(){
       manager.sendtoWait(resp,len_resp,from);    
       timeSynced = true;
     }
-   }*/
+   }
    if (LoRa.recvfromAckTimeout(buf, &len, timeoutSmallPkt, &from)) { // if time request received
       if (len > 0) {
         for (byte j = 0; j < sizeof(buf); j++) {  // store tranmission into buffer
@@ -3201,7 +3087,7 @@ void syncTime(){
   }
       
 }
-
+*/
 //======================================================================================
 
 //--------------- Cellular Signal Strength Scout Mode ----------------------------------
