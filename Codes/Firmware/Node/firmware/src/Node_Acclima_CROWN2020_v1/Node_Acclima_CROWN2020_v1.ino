@@ -26,7 +26,7 @@
    John Anderson, Acclima Inc.
    David Anderson, Acclima Inc.
 
-   Last edited: August 4, 2020
+   Last edited: September 24, 2020
 
    - Version History -
    Version 2020.05.06 fixes issue with data string when a sensor is unresponsive
@@ -37,14 +37,15 @@
    Version 2020.05.28 removes #ifdef CONT_MEAS statements, fixes issue with repeated sensor measurements after using 
                       "t" menu option, removes changing depths array during sensor scan to avoid pairing addresses with 
                       wrong depths
-                      Add travel time to TDR sensor output
    Version 2020.06.04 fixes -999 for all sensor depths (uncommented recalling depths array from memory)
                       fix menu option "d" to include sensor addresses in depths array
+                      Add travel time to TDR sensor output
    Version 2020.06.22 limits loss of data when measurement int = 15 min, and N gets garbled timestamp at measurement interval
                       following daily handshake with G (doesn't fix the garbled timestamp)                 
                       adds if(nYear - 2000 > 0) in listenRespond()
    Version 2020.07.28 Adds radio frequency to menu header
    Version 2020.08.04 Removes if(buf[0] == GatewayID) in fieldSync --> rejects transmissions if GatewayID = 50 b/c timestamp starts with char "2" = dec 50
+   Version 2020.09.24 Minor edits to decodeConfig when delimiting sensor addresses and depths
 */
 
 //===================================================================================================
@@ -84,7 +85,7 @@
 
 //------------- Declare Variables ---------------------------------
   
-char VERSION[] = "V2020.08.04";
+char VERSION[] = "V2020.09.24";
 
 //-----*** Identifiers ***-----
 
@@ -2295,23 +2296,27 @@ void decodeConfig(char config_string[200]) {
       //     Serial.print(commaPos[firstComma + R]);
       //     Serial.print(commaPos[firstComma + L]);
       //     Serial.print(x);
-      depths[r][0] = configN[commaPos[firstComma + L] + 1];
-      Serial.print(depths[r][0]);
-  
-      for (byte c = 1; c < x; c++) {
-        depths[r][c] = configN[commaPos[firstComma + R] + c];
-        Serial.print(depths[r][c]);
-      }
-      depths[r][x] = 0;
-      Serial.println();
-      delay(5);
-      if (r == (sensorNum - 1) && R != (commaTot - 3)) {
+     
+      if (r == (sensorNum - 1) && R != (commaTot - 3)) {    // 9/24/2020: check for correct number of sensors first
         //      Serial.println(R);
         //      Serial.println(commaTot);
         Serial.println("ERROR: Incorrect number of sensor depths");
+        configOK = false;
+      } else {
+        depths[r][0] = configN[commaPos[firstComma + L] + 1];
+        Serial.print(depths[r][0]);
+    
+        for (byte c = 1; c < x; c++) {
+          depths[r][c] = configN[commaPos[firstComma + R] + c];
+          Serial.print(depths[r][c]);
+        }
+        depths[r][x] = 0;
+        Serial.println();
+        delay(5); 
       }
     }
   }
+
   if (!configOK) {
     Serial.println("!!! FAIL: Invalid configuration !!!");
   } else {
@@ -2330,7 +2335,7 @@ void decodeConfig(char config_string[200]) {
     EEPROM.update(EEPROM_ALRM1_INT, interval);
     EEPROM.put(EEPROM_DEPTHS, depths);
   }
-
+    delay(400);   // Added 9/24/2020
 }
 
 void setRTCTime() {
@@ -2485,7 +2490,7 @@ void charinput() {
     {
       delay(100);                                  // give time for everything to come in
       numincoming = Serial.available();            // number of incoming bytes
-      //       Serial.println(numincoming);
+             Serial.println(numincoming);
       for (byte i = 0; i <= numincoming; i++)           // read in everything
       {
         incomingChar[i] = Serial.read();
