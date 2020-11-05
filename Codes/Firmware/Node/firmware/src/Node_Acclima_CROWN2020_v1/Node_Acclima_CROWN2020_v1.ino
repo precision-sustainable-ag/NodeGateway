@@ -26,7 +26,7 @@
    John Anderson, Acclima Inc.
    David Anderson, Acclima Inc.
 
-   Last edited: September 24, 2020
+   Last edited: October 29, 2020
 
    - Version History -
    Version 2020.05.06 fixes issue with data string when a sensor is unresponsive
@@ -46,203 +46,207 @@
    Version 2020.07.28 Adds radio frequency to menu header
    Version 2020.08.04 Removes if(buf[0] == GatewayID) in fieldSync --> rejects transmissions if GatewayID = 50 b/c timestamp starts with char "2" = dec 50
    Version 2020.09.24 Minor edits to decodeConfig when delimiting sensor addresses and depths
+   Version 2020.10.29 Adds solar current and voltage calcs compatible with new hardware
 */
 
 //===================================================================================================
 
 //------------ Libraries --------------------------------------
-
-#include "AcclimaSDI12.h"
-#include <SPI.h>                                      // SPI functions for Flash chip
-#include <Wire.h>                                     // I2C functions for RTC
-#include <EEPROM.h>                                   // built-in EEPROM routines
-#include <avr/sleep.h>                                // sleep functions
-#include <DS3232RTC.h>                                // RTC library
-#include "FlashTools.h"
-#include <ACReliableMessage.h>                        // Acclima edits of RadioHead library
-#include <avr/io.h>
-#include <avr/interrupt.h>
-#include <avr/wdt.h>                                  // controls watchdog timer (we want to turn it off)
-#include <stdio.h>
-#include "GlobalDefs.h"
+  
+  #include "AcclimaSDI12.h"
+  #include <SPI.h>                                      // SPI functions for Flash chip
+  #include <Wire.h>                                     // I2C functions for RTC
+  #include <EEPROM.h>                                   // built-in EEPROM routines
+  #include <avr/sleep.h>                                // sleep functions
+  #include <DS3232RTC.h>                                // RTC library
+  #include "FlashTools.h"
+  #include <ACReliableMessage.h>                        // Acclima edits of RadioHead library
+  #include <avr/io.h>
+  #include <avr/interrupt.h>
+  #include <avr/wdt.h>                                  // controls watchdog timer (we want to turn it off)
+  #include <stdio.h>
+  #include "GlobalDefs.h"
 
 //------------- Assign Pins --------------------------------------
 
-#define SDI12Data           10                       // Pin for SDI-12 sensors; handles interrupts
-#define SDI12Pwr            0                        // Switches power to SDI-12 sensors on/off
-#define LED                 15                       // LED on D15
-#define Flash_SS            23
-#define baudRate            57600                    // John, 27-Mar-2019: Changed from 115200 to 57600 because when MCU at 8 MHz the sampling resolution is reduced
-#define pin_SDIv12          1                        // pin 41 --> D1  -- switch SDI-12 power supply to 12 volts (vs. 7.5)
-#define pin_solarVoltage    A5
-#define ADC_REF_VOLTAGE     3.3
-#define ADC_RESOLUTION      1024
-#define pin_solarShort      A4
-#define SOLAR_CALIB         1.0                      // This will become a EEPROM constant that is set during factory config – for now just use 1.0
-#define MAX_SENSORS         16
-#define getTT                                        // if defined, queries TDRs for travel time 
-#define keepPEC                                      // if defined, keeps pore water EC in data string, if not, replaces PEC with travel time
-
+  #define SDI12Data           10                       // Pin for SDI-12 sensors; handles interrupts
+  #define SDI12Pwr            0                        // Switches power to SDI-12 sensors on/off
+  #define LED                 15                       // LED on D15
+  #define Flash_SS            23
+  #define baudRate            57600                    // John, 27-Mar-2019: Changed from 115200 to 57600 because when MCU at 8 MHz the sampling resolution is reduced
+  #define pin_SDIv12          1                        // pin 41 --> D1  -- switch SDI-12 power supply to 12 volts (vs. 7.5)
+  #define pin_solarVoltage    A5
+  #define ADC_REF_VOLTAGE     3.3
+  #define ADC_RESOLUTION      1024
+  #define pin_solarShort      A4
+  #define SOLAR_CALIB         1.0                      // This will become a EEPROM constant that is set during factory config – for now just use 1.0
+  #define MAX_SENSORS         16
+  #define getTT                                        // if defined, queries TDRs for travel time 
+  #define keepPEC                                      // if defined, keeps pore water EC in data string, if not, replaces PEC with travel time
+  #define ADC_MAXVALUE        1023
+  
 //------------- Declare Variables ---------------------------------
   
-char VERSION[] = "V2020.09.24";
+  char VERSION[] = "V2020.10.29";
 
 //-----*** Identifiers ***-----
 
-char  projectID[6];               // 17-Mar-2020: use project ID to filter incoming data from multiple devices
-uint8_t  radioID;                 // Active Node radio ID
-uint8_t  GatewayID;               // Gateway radio ID
-uint8_t  default_radioID;         // radio ID defaults to last 2 digits of SN
-FactoryInfo facInfo;              // pull in factory info (serial num, etc) - see GlobalDefs.h
+  char  projectID[6];               // 17-Mar-2020: use project ID to filter incoming data from multiple devices
+  uint8_t  radioID;                 // Active Node radio ID
+  uint8_t  GatewayID;               // Gateway radio ID
+  uint8_t  default_radioID;         // radio ID defaults to last 2 digits of SN
+  FactoryInfo facInfo;              // pull in factory info (serial num, etc) - see GlobalDefs.h
 
 //-----*** for EEPROM ***-----
-
-#define EEPROMSHIFT                 2800                                    
-#define EEPROM_LOW_BATT             (1 + EEPROMSHIFT)         // flag for tracking if battV < limit
-#define EEPROM_GATEWAYID            (2 + EEPROMSHIFT)         // storage location for gatewayID                     (was gatewayMem)
-#define EEPROM_PROJECTID            (18 + EEPROMSHIFT)        // first storage location for projectID array            (was siteIDMem)
-#define EEPROM_DEFAULT_RADIO        (3 + EEPROMSHIFT)         // static default radio address (last 2 digits of serial number)
-#define EEPROM_ACTIVE_RADIO         (4 + EEPROMSHIFT)         // active radio address, can be changed by user
-#define EEPROM_FLAG_RADIO           (5 + EEPROMSHIFT)         // flag to use active address
-#define EEPROM_ALRM1_INT            (9 + EEPROMSHIFT)         // storage location for Alarm 1 interval              (was intervalMem)
-#define EEPROM_GW_PRESENT           (14 + EEPROMSHIFT)        // store "1" for yes, "0" for node                    (was gatewayPresMem)
-#define EEPROM_RH_PRESENT           (16 + EEPROMSHIFT)        //                                                    (was RHPresMem)
-#define EEPROM_DEPTHS               (24 + EEPROMSHIFT)        // first storage location for depths array
-
-#define EEPROM_SERIALNUM            10
-#define EEPROM_OPTSRADIO            17
-#define EEPROM_verHW                16  // char 
-#define EEPROM_optsRadio            17  // char
-
-bool  gatewayPresent = true;            // flags if user is using a Gateway
-
-//The following value is determined by reading EEPROM constant (see method getLoRaFreq())
-uint16_t LoRaFREQ;
-
-uint32_t timeSync = 7200000;            // timeout for initial sync, 14May: 2 hours
-//uint32_t timeSync = 900000; // 14May for testing 900000 = 15 minutes
-uint32_t fieldSyncStart;
-uint32_t fieldSyncStop;
+  
+  #define EEPROMSHIFT                 2800                                    
+  #define EEPROM_LOW_BATT             (1 + EEPROMSHIFT)         // flag for tracking if battV < limit
+  #define EEPROM_GATEWAYID            (2 + EEPROMSHIFT)         // storage location for gatewayID                     (was gatewayMem)
+  #define EEPROM_PROJECTID            (18 + EEPROMSHIFT)        // first storage location for projectID array            (was siteIDMem)
+  #define EEPROM_DEFAULT_RADIO        (3 + EEPROMSHIFT)         // static default radio address (last 2 digits of serial number)
+  #define EEPROM_ACTIVE_RADIO         (4 + EEPROMSHIFT)         // active radio address, can be changed by user
+  #define EEPROM_FLAG_RADIO           (5 + EEPROMSHIFT)         // flag to use active address
+  #define EEPROM_ALRM1_INT            (9 + EEPROMSHIFT)         // storage location for Alarm 1 interval              (was intervalMem)
+  #define EEPROM_GW_PRESENT           (14 + EEPROMSHIFT)        // store "1" for yes, "0" for node                    (was gatewayPresMem)
+  #define EEPROM_RH_PRESENT           (16 + EEPROMSHIFT)        //                                                    (was RHPresMem)
+  #define EEPROM_DEPTHS               (24 + EEPROMSHIFT)        // first storage location for depths array
+  
+  #define EEPROM_SERIALNUM            10
+  #define EEPROM_OPTSRADIO            17
+  #define EEPROM_verHW                16  // char 
+  #define EEPROM_optsRadio            17  // char
+  #define EEPROM_iSolarRes            48
+  #define EEPROM_verHW                16
+    
+  bool  gatewayPresent = true;            // flags if user is using a Gateway
+  
+  //The following value is determined by reading EEPROM constant (see method getLoRaFreq())
+  uint16_t LoRaFREQ;
+  
+  uint32_t timeSync = 7200000;            // timeout for initial sync, 14May: 2 hours
+  //uint32_t timeSync = 900000; // 14May for testing 900000 = 15 minutes
+  uint32_t fieldSyncStart;
+  uint32_t fieldSyncStop;
 
 //-----*** for Flash ***-----
 
-uint32_t logsBeginAddr = LOG_beginAddr;
-uint32_t logsEndAddr = LOG_endAddr;
-const uint32_t IDaddr = 0x001000;   // we will write a list of sensor IDs here (first sector)
-uint32_t lastIDaddr;                // This shows where the ID List ends
-uint32_t WAC = 0;                   // This is our Write Access Counter -- keeps track of how many things we write to Flash
-// Initialize to zero if no record found.  Increment before write.  Persistant - save to log space after erase.
-// This should never be written as 0 or 0xFFFFFFFF.
-const uint32_t WAC_Sync_Range = 0x7FFFFFFF;   // if the desired WAC is greater by this amount, consider uploading everything
+  uint32_t logsBeginAddr = LOG_beginAddr;
+  uint32_t logsEndAddr = LOG_endAddr;
+  const uint32_t IDaddr = 0x001000;   // we will write a list of sensor IDs here (first sector)
+  uint32_t lastIDaddr;                // This shows where the ID List ends
+  uint32_t WAC = 0;                   // This is our Write Access Counter -- keeps track of how many things we write to Flash
+  // Initialize to zero if no record found.  Increment before write.  Persistant - save to log space after erase.
+  // This should never be written as 0 or 0xFFFFFFFF.
+  const uint32_t WAC_Sync_Range = 0x7FFFFFFF;   // if the desired WAC is greater by this amount, consider uploading everything
 
 //-----*** for Main Menu ***-----
 
-int   indata;                       // user input data
-int   incoming[7];
-char  incomingChar[200];
-char  charInput[200];
-unsigned long serNum;               // eerial number
-bool skipScan = false;              // tracks if sensor scan was skipped by user
+  int   indata;                       // user input data
+  int   incoming[7];
+  char  incomingChar[200];
+  char  charInput[200];
+  unsigned long serNum;               // eerial number
+  bool skipScan = false;              // tracks if sensor scan was skipped by user
 
 //-----*** Data Variables ***-----
 
 //-- SDI-12 addresses and metadata
 
-char oldAddress = '!';                         // place holder for changing sensor address
-
-bool RHPresent = false;                        // tracks presence of RH sensor (RH sensor requires extra routines for heating)
-char RHsensor;                                 // holds address of RH sensor
-char Tsensor;                                  // holds address of Temp sensor
-bool TPresent = false;                         // tracks presence of Temp sensor
-char CS655addr;                                // holds address of CS655 (CS655s replaced by TDR315Hs in 2019)
-
-char activeSDI12[MAX_SENSORS + 1];             // array holding active sensor addresses (up to 16 sensors)
-byte registerSDI12[MAX_SENSORS] = {            // holds addresses of active SDI12 addresses
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-  0B00000000,
-};
-
-String sensorIDs = "";
-char sensorList[MAX_SENSORS][36];   // added 4-Mar-2020: 2D array for holding sensor IDs to act as lookup table
-byte sensorNum = 0;                 // added 4-Mar-2020: counter for writing to 2D array
-byte rowNum = 0;
-char depths[MAX_SENSORS][10];
-char depthsScan[MAX_SENSORS];
-bool sensorDetected = false;        // added 4-Mar-2020: flag to initiate overwrite of sensor ID memory space
+  char oldAddress = '!';                         // place holder for changing sensor address
+  
+  bool RHPresent = false;                        // tracks presence of RH sensor (RH sensor requires extra routines for heating)
+  char RHsensor;                                 // holds address of RH sensor
+  char Tsensor;                                  // holds address of Temp sensor
+  bool TPresent = false;                         // tracks presence of Temp sensor
+  char CS655addr;                                // holds address of CS655 (CS655s replaced by TDR315Hs in 2019)
+  
+  char activeSDI12[MAX_SENSORS + 1];             // array holding active sensor addresses (up to 16 sensors)
+  byte registerSDI12[MAX_SENSORS] = {            // holds addresses of active SDI12 addresses
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+    0B00000000,
+  };
+  
+  String sensorIDs = "";
+  char sensorList[MAX_SENSORS][36];   // added 4-Mar-2020: 2D array for holding sensor IDs to act as lookup table
+  byte sensorNum = 0;                 // added 4-Mar-2020: counter for writing to 2D array
+  byte rowNum = 0;
+  char depths[MAX_SENSORS][10];
+  char depthsScan[MAX_SENSORS];
+  bool sensorDetected = false;        // added 4-Mar-2020: flag to initiate overwrite of sensor ID memory space
 
 //-- Sensor data
 
-String SDI12data = "";              // String for compiling data from SDI12 sensors
-String allData = "";                // String for compiling metadata and sensor data
-int measDelay;                      // delay for SDI-12 measurement
-boolean SDI12response = false;
-char sep = '~';                     // data delimiter
+  String SDI12data = "";              // String for compiling data from SDI12 sensors
+  String allData = "";                // String for compiling metadata and sensor data
+  int measDelay;                      // delay for SDI-12 measurement
+  boolean SDI12response = false;
+  char sep = '~';                     // data delimiter
 
 //-- Onboard Temperature sensor
 
-float  boxTemp;
+  float  boxTemp;
 
 //-- Battery voltage measurement and calc
 
-float multiplier = 0.00322;         // scaling factor for analogRead
-float battV;                        // battery voltage
-float lowBatt = 3.4;                // low battery limit
-bool  battLow = false;              // tracks if battery V fell below limit
+  float multiplier = 0.00322;         // scaling factor for analogRead
+  float battV;                        // battery voltage
+  float lowBatt = 3.4;                // low battery limit
+  bool  battLow = false;              // tracks if battery V fell below limit
 
 //-----*** for Loop ***-----
 
-bool duringInit = true;
-bool dataSent = false;
-bool updated = false;
-bool userinput = false;
+  bool duringInit = true;
+  bool dataSent = false;
+  bool updated = false;
+  bool userinput = false;
 
 //-----*** for RTC ***-----
 
 //-- Time and Date values
-
-byte   secs;                  // time and date values
-byte   mins;
-byte   hrs;
-byte   days;
-byte   mnths;
-int    yrs;
-char   TMZ[] = "UTC";         // Time Zone
-
-String timestamp = "";
-tmElements_t tm;
+  
+  byte   secs;                  // time and date values
+  byte   mins;
+  byte   hrs;
+  byte   days;
+  byte   mnths;
+  int    yrs;
+  char   TMZ[] = "UTC";         // Time Zone
+  
+  String timestamp = "";
+  tmElements_t tm;
 
 //-- Alarms
-
-byte  interval;              // user-defined measurement interval
-byte  alarmMins;
-byte  NISTmin = 35;           // 25-Mar-2020: edited to 35 minutes to not collide with heaterOff(), 27-Jan-2020 wake up at 12:35 CST (18:36 UTC) for daily sync check
-byte  NISThr = 18;
+  
+  byte  interval;              // user-defined measurement interval
+  byte  alarmMins;
+  byte  NISTmin = 35;           // 25-Mar-2020: edited to 35 minutes to not collide with heaterOff(), 27-Jan-2020 wake up at 12:35 CST (18:36 UTC) for daily sync check
+  byte  NISThr = 18;
 
 // for testing ////
 //byte  NISTmin = 20;           // 27-Jan-2020 wake up at 12:36 CST (18:36 UTC) for daily sync check
 //byte  NISThr = 18;
 ////
 
-boolean timeUpdated = false;
+  boolean timeUpdated = false;
 
 //-----*** LoRa Radio Settings ***-----
 
-#define     TxPower  20     // options: +5 to +23 (default 13)
-bool radioSwitch;           // tracks if using default radio address or not
+  #define     TxPower  20     // options: +5 to +23 (default 13)
+  bool radioSwitch;           // tracks if using default radio address or not
 //  unsigned int  radioTimeout = RH_DEFAULT_TIMEOUT;   // changed from 300 ms to 200ms(default)
 //  uint8_t  retryNum = 10; //RH_DEFAULT_RETRIES;            // changed from 20 to 3 (default)
 
@@ -266,20 +270,20 @@ bool radioSwitch;           // tracks if using default radio address or not
   //                              This wait should assume a full packet, and that the sender is retrying.
   //                              This should be at minumim: (((AckWait * 2) + PacketAirTime) * NumberOfRetries)
   // ---------------------------------------------------------------------------------------------------------------------------*/
-#define retryNum        3       // 3 retries should be enough, if our wait intervals are correct
-#define timeoutACK      120     // This is the wait period after a transmission to receive an ACK for that one packet. (ACKWait)
-#define timeoutPacket   2000    // this is the wait period to receive one large packet including retries. (PacketWait)
-#define timeoutSmallPkt 1000    // Timeout interval for a small packet (i.e. 20 bytes).  Approx Airtime=timeoutAck.
-
-byte numMissed = 0;             // counter for missed communications with Gateway
+  #define retryNum        3       // 3 retries should be enough, if our wait intervals are correct
+  #define timeoutACK      120     // This is the wait period after a transmission to receive an ACK for that one packet. (ACKWait)
+  #define timeoutPacket   2000    // this is the wait period to receive one large packet including retries. (PacketWait)
+  #define timeoutSmallPkt 1000    // Timeout interval for a small packet (i.e. 20 bytes).  Approx Airtime=timeoutAck.
+  
+  byte numMissed = 0;             // counter for missed communications with Gateway
 
 // ------- Initialize ----------------------------------------------------
-
-RH_RF95 driverRFM95;                                 // Driver for the RFM95 radio
-ACReliableMessage LoRa(driverRFM95, radioID);        // LoRa radio manager
-
-SDI12 SDI12port(SDI12Data);
-FlashTools ft;
+  
+  RH_RF95 driverRFM95;                                 // Driver for the RFM95 radio
+  ACReliableMessage LoRa(driverRFM95, radioID);        // LoRa radio manager
+  
+  SDI12 SDI12port(SDI12Data);
+  FlashTools ft;
 
 //===================================================================================================
 
@@ -398,7 +402,7 @@ void setup() {
   
     long timeout = millis();
     char skipTest;
-    while ((millis() - timeout) < 5000)
+    while ((millis() - timeout) < 7000)
     {
       if (Serial.available() > 0)                        // if something typed, go to menu
       {
@@ -946,7 +950,7 @@ void readClock()
 
 }
 
-float getBoxT() {
+float getBoxT() { 
   boxTemp = (float)RTC.temperature() / 4.0;
   return boxTemp;
 }
@@ -1485,6 +1489,31 @@ void getTimeData(char index){
 
 float calcbattV() {
   float result;
+  pinMode(pin_mBatt, OUTPUT);
+  pinMode(pin_battV, INPUT);
+  
+  digitalWrite(pin_mBatt, HIGH);
+  delayMicroseconds(500);
+  
+  uint16_t vInt;
+  vInt = analogRead(pin_battV);
+
+  digitalWrite(pin_mBatt, LOW);  
+
+  uint16_t battV100 = (uint16_t)(((uint32_t)vInt * 4 * ADC_REF_VOLTAGE * 100 + (3 * ADC_MAXVALUE / 2)) / (3 * ADC_MAXVALUE));
+  // NOTE: The order of operations is important in code above to maintain the greatest precision!
+  // NOTE: As needed, terms have been typecasted to uint32_t to avoid overflow for 2 byte integer.
+  // Explanation of the terms:
+  //  vInt:                             the raw integer from the analog to digital converter (ADC)
+  //  4 / 3:                            correction factor due to voltage divider on battery measurement circuit
+  //  ADC_REF_VOLTAGE / ADC_MAXVALUE:   convert the raw, 10-bit analog number into a meaningful voltage
+  //  100:                              give the result in centi-volts and therefore allow storing a floating point number in 2 bytes instead of using the 4-byte float.
+  //  3 * ADC_MAXVALUE / 2:             for rounding to nearest integer value (leave this off to get the truncated value)
+
+  Serial.println(battV100);
+  result = battV100 / 100 + float((battV100 % 100))/100;
+  return result;
+/*
   analogComp_on();
   digitalWrite(pin_mBatt, HIGH);  // turn on voltage divider
   delay(50);
@@ -1495,6 +1524,8 @@ float calcbattV() {
 
   digitalWrite(pin_mBatt, LOW);   // turn off voltage divider
   return result;
+*/
+  
 }
 
 //===================================================================================================
@@ -1505,8 +1536,11 @@ void Timestamp() {      // compile timestamp
 
   battV = calcbattV();
   getBoxT();
-  unsigned int pvCurrent = getSolarCurrent();
-  float pvVoltage = getSolarVoltage();
+//  unsigned int pvCurrent = getSolarCurrent();
+//  float pvVoltage = getSolarVoltage();
+  uint16_t pvCurrent = GetISolar();   // using John's code
+  float pvVoltage = GetVSolar();
+ 
 
   timestamp = "";
   delay(20);
@@ -1604,6 +1638,60 @@ void saveData() {
 
 //--------------- Solar panel ----------------------------------------------------------
 
+//Returns voltage of solar cell in centi-volts (or volts * 100)
+float GetVSolar() {
+  pinMode(pin_solarVoltage, INPUT);
+  float result;
+  uint16_t rawSolarV = analogRead(pin_solarVoltage);  
+  uint16_t calc = (uint16_t)(((uint32_t)rawSolarV * 2 * ADC_REF_VOLTAGE * 100 + (ADC_MAXVALUE / 2)) / ADC_MAXVALUE);
+  result = float(calc/100) + float((calc % 100))/100;
+  return result;
+  // NOTE: The order of operations is important in code above to maintain the greatest precision!
+  // NOTE: As needed, terms have been typecasted to uint32_t to avoid overflow for 2 byte integer.
+  // Explanation of the terms:
+  //  rawSolarV:                        the raw integer from the analog to digital converter (ADC)
+  //  2:                                correction factor due to a div-2 voltage divider so that solar voltage does not exceed range of ADC (solar panel up around 6 volts whereas max for ADC is 3.3 volts)
+  //  ADC_REF_VOLTAGE / ADC_MAXVALUE:   convert the raw, 10-bit analog number into a meaningful voltage
+  //  100:                              give the result in centi-volts and therefore allow storing a floating point number in 2 bytes instead of using the 4-byte float.
+  //  ADC_MAXVALUE / 2:                 for rounding to nearest integer value (leave this off to get the truncated value)
+}
+
+
+//Returns short circuit current of PV cell in milliamperes (in effect gives the total available charging current of solar cell)
+uint16_t GetISolar() {
+  pinMode(pin_solarShort, OUTPUT);
+
+  uint16_t iSolarRes100;
+  EEPROM.get(EEPROM_iSolarRes, iSolarRes100);
+
+  if (iSolarRes100 == (uint16_t)0xFFFF) {
+    char verHW;
+    EEPROM.get(EEPROM_verHW, verHW);
+
+    // WARNING: EEPROM factory constants must always be written from this point forward!
+    if (verHW != 'E')
+      iSolarRes100 = 1000;    // this is a default of 10.00 ohms!
+    else 
+      iSolarRes100 = 100;     // default of 1.00 ohms for old board rev. E  
+  }
+   
+  digitalWrite(pin_solarShort, HIGH);     // This "shorts" solar cell through shorting resisitor (depending on hardware could be a single 1 ohm resistor or an array of resistors that yields 10 ohms)
+  delayMicroseconds(500);                 // Wait 1/2 millisecond before sampling to ensure steady state
+//  uint16_t vSolar100 = GetVSolar();       // Read voltage of shorted solar cell    
+  float vSolar = GetVSolar();
+  digitalWrite(pin_solarShort, LOW);      // Clear short
+
+  uint16_t dec = (uint16_t)(vSolar*100) % 100;
+  uint16_t vSolar100 = 100*((uint16_t)vSolar) + dec;
+  
+  return (uint16_t)(((uint32_t)vSolar100 * 1000) / iSolarRes100);
+  // Explanation:
+  // V = I * R  -->  I = V / R
+  // NOTE: Both vSolar100 and iSolarRes100 are multiplied by 100 for greater precision but they are divided so that cancels out.
+  // NOTE: As needed, terms have been typecasted to uint32_t to avoid overflow for 2 byte integer.
+  // Multiplied by 1000 for conversion from amperes to "milliamps".
+}
+
 /* float getMOSFETresistance(float temp, float voltSD) {
    //NOTE: This is based on datasheet graphs but has empirical compensation as well
    //returns SSM3K376R MOSFET resistance (in Ohms) as a function of temperature and [pre]source-drain voltage (assuming 3-volt gate-source voltage)
@@ -1621,7 +1709,7 @@ void saveData() {
    return adjusted;
  }
 */
-
+/*
 //Returns voltage of solar cell in volts (battery load may affect voltage)
 float getSolarVoltage() {
   uint16_t rawSolarV;
@@ -1644,7 +1732,7 @@ unsigned int getSolarCurrent() {
   return (uint16_t)((solarV / (SOLAR_CALIB)) * 1000);
   //return (uint16_t)((solarV / (SOLAR_CALIB + getMOSFETresistance((float)RTC.temperature()/4.0, solarV))) * 1000);         //solar current is voltage / resistance (which is 1 Ohm in this case); multiply by 1000 to convert to milliamperes
 }
-
+*/
 //======================================================================================
 
 //--------------- RH Sensor Heater Functions -------------------------------------------

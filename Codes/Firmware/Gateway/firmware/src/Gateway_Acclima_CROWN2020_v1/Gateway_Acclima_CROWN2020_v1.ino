@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc. 
    
-   Last edited: June 22, 2020
+   Last edited: October 29, 2020
 
    - Version History -
     
@@ -43,6 +43,8 @@
    Version 2020.06.22 For initial fieldSync, send unsent data saved on microSD first (to not delay sync w Nodes)
    Version 2020.07.28 Adds radio frequency to menu header
    Version 2020.08.06 Adds scout mode for measuring cellular signal
+   Version 2020.10.29 Adds cell module baud rate detection, sets to 57600 instead of 4800
+                      Adds solar current and voltage calcs compatible with new hardware
 */
 
 //===================================================================================================
@@ -60,6 +62,8 @@
 #include "avr/io.h"
 #include "avr/interrupt.h"
 #include "avr/wdt.h"                               // controls watchdog timer (we want to turn it off)
+#include "SIMCOM_Lite.h"                           // Autobaud 28Oct20
+
 
 // ------- Assign Pins ----------------------------------------------------
 
@@ -83,10 +87,11 @@
   #define ADC_RESOLUTION      1024
   #define pin_solarShort      A4
   #define SOLAR_CALIB         1.0          //This will become a EEPROM constant that is set during factory config – for now just use 1.0
-
+  #define ADC_MAXVALUE        1023
+  
 // ------- Declare Variables -----------------------------------------------
   
-  char VERSION[] = "V2020.08.06";
+  char VERSION[] = "V2020.10.29";
 
 //-----*** Site/Gateway Identifier ***-----
 
@@ -104,8 +109,11 @@
   #define EEPROM_NODEIDS              (7 + EEPROMSHIFT)         // first storage location for nodeIDs array           (was nodeIDsMem)
   #define EEPROM_DEVKEY               (20 + EEPROMSHIFT)        // first storage location for device key array        (was devkeyMem)
   #define EEPROM_ALRM2_INT            (30 + EEPROMSHIFT)        // storage location for uploadInt                     (was alarm2Mem)  
+  #define EEPROM_BAUDCHECK            (40 + EEPROMSHIFT)        // store whether or not cell baud rate has already been checked and set to 57600
   #define EEPROM_OPTSRADIO            17 
   #define EEPROM_SERIALNUM            10
+  #define EEPROM_iSolarRes            48
+  #define EEPROM_verHW                16
   
   uint16_t LoRaFREQ;                            // This value is determined by reading EEPROM constant (see method getLoRaFreq())
 
@@ -120,7 +128,8 @@
   char      charInput[20];                         // holder for character user input (charinput())
   char      incomingChar[20];                      // holder for incoming char or byte values
   uint8_t   u_indata;                              // holder for incoming uint8_t value (byteInput())
-
+  bool      clockMenu = false;                     // don't send time update message if clock update initiated form Main Menu
+  
 //-----*** for battV (12V) calculation ***-----
 
   float   battV;                                   // battery voltage (V) --> max 12V with voltage regulator
@@ -233,6 +242,8 @@
   uint8_t answer;                                   // flag for matching expected response to actual response (sendATcommand())
   char    aux_str[FONA_MSG_SIZE];                   // buffer for compiling AT commands
   boolean fonaON = false;                           // flag for cellular module power status
+  uint16_t setbaudrate = 57600;
+  uint32_t oldbaudrate;
   
   //-- Network settings
   
@@ -255,8 +266,9 @@
   ACReliableMessage LoRa(driverRFM95, GatewayID);        // LoRa radio manager
 
   HardwareSerial *fonaSerial = &Serial1;              // initialize serial port for comm to SIM5320    
-  
   Adafruit_FONA_3G fona = Adafruit_FONA_3G(Fona_RST); // initialize cellular module object
+  
+  SimCom *CellModem;  // autobaud lib 28Oct20
   
   File myfile;    // initialize object for sensor data file 
   File dump;      // initialize object for dump file
@@ -287,6 +299,32 @@ void setup()
   pinMode(pin_SD_OFF, OUTPUT); 
 
   randomSeed(analogRead(4));                      // to randomize IP choices in NISTtime 
+
+  //--- Check cell baud rate if haven't already
+  
+  byte baudChecked = EEPROM.read(EEPROM_BAUDCHECK);
+  
+  if(baudChecked != 1){
+    Serial.print("Checking cell modem baud rate... ");
+    CellModem = new SimCom(Serial1);  // 28Oct20
+    oldbaudrate = CellModem->AutoBaud();
+    Serial.println(oldbaudrate);
+  
+    if(oldbaudrate != setbaudrate){
+      Serial.print("Setting baud rate... ");
+      if(!CellModem->ChangeBaud(57600)){
+        Serial.println("Unable to change baud rate");
+      } else {
+        baudChecked = 1;
+        EEPROM.update(EEPROM_BAUDCHECK, baudChecked);
+        Serial.println(" done.");
+      }
+    } else {
+      Serial.println("OK");
+      baudChecked = 1;
+      EEPROM.update(EEPROM_BAUDCHECK, baudChecked);
+    }
+  }
     
   if (digitalRead(Fona_PS) == HIGH) {
     toggle();    // if Fona is on, turn it off
@@ -642,7 +680,7 @@ bool GetNodeData(String* msg, uint8_t NodeAddr) {
   *msg += String(mins);
   *msg += ":";
   *msg += String(secs);
-  Serial.println(*msg);
+//  Serial.println(*msg);
 
   uint8_t len_resp = (*msg).length() + 1;
   uint8_t resp[len_resp];
@@ -1209,8 +1247,11 @@ void resetArrays(){
 
 void sendDataSD() {
 
-  unsigned int pvCurrent = getSolarCurrent();         // get photovoltaic current
-  float pvVoltage = getSolarVoltage();                // get photovoltaic voltage  
+//  unsigned int pvCurrent = getSolarCurrent();         // get photovoltaic current
+//  float pvVoltage = getSolarVoltage();                // get photovoltaic voltage  
+  uint16_t pvCurrent = GetISolar();   // using John's code
+  float pvVoltage = GetVSolar();
+  
   char aux_str2[FONA_MSG_SIZE];
 
   timestamp();                                        // compile timestamp String
@@ -1502,8 +1543,11 @@ void sendDataSD() {
 
 void sendDataArray() {
 
-  unsigned int pvCurrent = getSolarCurrent();
-  float pvVoltage = getSolarVoltage();
+  //unsigned int pvCurrent = getSolarCurrent();
+  uint16_t pvCurrent = GetISolar();   // using John's code
+  float pvVoltage = GetVSolar();
+    
+//  float pvVoltage = getSolarVoltage();
 //  unsigned int pvVoltageSend = pvVoltage * 1000; // convert float (V) to int (mV)
     float boxTemp = getBoxT();    // added 14-Feb-2020
   
@@ -1708,7 +1752,7 @@ void fonaOn() {
   }
 
   if(digitalRead(Fona_PS) == HIGH){
-  fonaSerial->begin(4800);
+  fonaSerial->begin(setbaudrate);
 
   if (! fona.begin(*fonaSerial)) { // turn on cell module
     if (! fona.begin(*fonaSerial)) {    // try again
@@ -1721,6 +1765,17 @@ void fonaOn() {
    fonaON = true;
   }
 
+//  // With John's autobaud:
+//
+//  if (CellModem->begin(57600)){
+//    Serial.println("MCU - modem link successful!");
+//    fonaON = true;  
+//    delay(3000);
+//    GPRS_on();
+//  } else {
+//    Serial.println("ERROR: Cell module failed to initialize");
+//  }
+  
   delay(3000);
   GPRS_on();
   }
@@ -1744,9 +1799,13 @@ void fonaOff() {
   delay(500);
  Serial.println();
 Serial.println("fonaOff(): Turning FONA off..."); 
-  fonaSerial ->end();
+//  fonaSerial ->end();
 
-  toggle();
+// with John's autobaud:
+  CellModem->end();
+  delay(1000);
+
+//  toggle();
 //  } else{}
 
 }
@@ -2022,6 +2081,59 @@ bool isSubstring(char substr[100], char str[100]) {
 // }
 */
 
+//Returns voltage of solar cell in centi-volts (battery load may affect voltage)
+float GetVSolar() {
+//unsigned int GetVSolar() {
+  pinMode(pin_solarVoltage, INPUT);  
+  float result;
+  uint16_t rawSolarV = analogRead(pin_solarVoltage);
+  uint16_t calc = (uint16_t)(((uint32_t)rawSolarV * 2 * ADC_REF_VOLTAGE * 100 + (ADC_MAXVALUE / 2)) / ADC_MAXVALUE);
+  result = float(calc/100) + float((calc % 100))/100;
+  return result;  
+  // NOTE: The order of operations is important in code above to maintain the greatest precision!
+  // NOTE: As needed, terms have been typecasted to uint32_t to avoid overflow for 2 byte integer.
+  // Explanation of the terms:
+  //  rawSolarV:                        the raw integer from the analog to digital converter (ADC)
+  //  2:                                correction factor due to a div-2 voltage divider so that solar voltage does not exceed range of ADC (solar panel up around 6 volts whereas max for ADC is 3.3 volts)
+  //  ADC_REF_VOLTAGE / ADC_MAXVALUE:   convert the raw, 10-bit analog number into a meaningful voltage
+  //  100:                              give the result in centi-volts and therefore allow storing a floating point number in 2 bytes instead of using the 4-byte float.
+  //  ADC_MAXVALUE / 2:                 for rounding to nearest integer value (leave this off to get the truncated value)
+}
+
+//Returns short circuit current of PV cell in milliamperes (in effect gives the total available charging current of solar cell)
+uint16_t GetISolar() {
+//unsigned int GetISolar() {
+  pinMode(pin_solarShort, OUTPUT);
+  uint16_t iSolarRes100;
+  EEPROM.get(EEPROM_iSolarRes, iSolarRes100);
+
+  if (iSolarRes100 == (uint16_t)0xFFFF) {
+    char verHW;
+    EEPROM.get(EEPROM_verHW, verHW);
+
+    // WARNING: EEPROM factory constants must always be written from this point forward!
+    if (verHW != '5')
+      iSolarRes100 = 1000;    // this is a default of 10.00 ohms!
+    else 
+      iSolarRes100 = 100;     // default of 1.00 ohms for old board rev. E  
+  }
+   
+  digitalWrite(pin_solarShort, HIGH);     // This "shorts" solar cell through shorting resistor (depending on hardware could be a single 1 ohm resistor or an array of resistors that yields 10 ohms)    
+  delayMicroseconds(500);                 // Wait 1/2 millisecond before sampling to ensure steady state
+  float vSolar = GetVSolar();       // Read voltage of shorted solar cell    
+  digitalWrite(pin_solarShort, LOW);      // Clear short
+
+  uint16_t dec = (uint16_t)(vSolar*100) % 100;
+  uint16_t vSolar100 = 100*((uint16_t)vSolar) + dec;
+  
+  return (uint16_t)(((uint32_t)vSolar100 * 1000) / iSolarRes100);
+  // Explanation:
+  // V = I * R  -->  I = V / R
+  // NOTE: Both vSolar100 and iSolarRes100 are multiplied by 100 for greater precision but they are divided so that cancels out.
+  // NOTE: As needed, terms have been typecasted to uint32_t to avoid overflow for 2 byte integer.
+  // Multiplied by 1000 for conversion from amperes to "milliamps".
+}
+/*
 //Returns voltage of solar cell in volts (battery load may affect voltage)
 float getSolarVoltage() {
   //Add the following lines to header and setup function:
@@ -2034,6 +2146,7 @@ float getSolarVoltage() {
   rawSolarV = analogRead(pin_solarVoltage);
   return (float)((ADC_REF_VOLTAGE * (float)rawSolarV / (float)ADC_RESOLUTION) * 2.0);   //multiplied by two because there is a voltage divider to keep the Arduino pin from getting 6+ volts from solar cell
 }
+
 
 //Returns short circuit current of PV cell in milliamperes (in effect gives the total available charging current of solar cell)
 unsigned int getSolarCurrent() {
@@ -2050,7 +2163,7 @@ unsigned int getSolarCurrent() {
   return (uint16_t)((solarV / (SOLAR_CALIB)) * 1000);
   //return (uint16_t)((solarV / (SOLAR_CALIB + getMOSFETresistance((float)RTC.temperature()/4.0, solarV))) * 1000);         //solar current is voltage / resistance (which is 1 Ohm in this case); multiply by 1000 to convert to milliamperes
 }
-
+*/
 
 //======================================================================================
 //======================================================================================
@@ -2219,7 +2332,9 @@ void MainMenu()
 
     case 99: case 67:          // ------ c - Set clock ---------------------------------------------
       Serial.println();
-      NISTsync(); 
+      clockMenu = true;
+      NISTsync();
+      clockMenu = false; 
       MainMenu();
       break;
 
@@ -2788,7 +2903,7 @@ void NISTsync(){
       delay(50);
       setAlarm1();
       setAlarm2();
-      } else {
+      } else if (!clockMenu) {
         sendNIST();
         delay(1000);
         fonaOff();
