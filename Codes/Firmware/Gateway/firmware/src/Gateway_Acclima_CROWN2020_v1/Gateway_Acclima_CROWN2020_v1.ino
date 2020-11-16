@@ -45,6 +45,7 @@
    Version 2020.08.06 Adds scout mode for measuring cellular signal
    Version 2020.10.29 Adds cell module baud rate detection, sets to 57600 instead of 4800
                       Adds solar current and voltage calcs compatible with new hardware
+   Version 2020.11.16 Remove autobaud commands (need to set baud rate on new hardware to 4800 with separate sketch)                   
 */
 
 //===================================================================================================
@@ -62,7 +63,7 @@
 #include "avr/io.h"
 #include "avr/interrupt.h"
 #include "avr/wdt.h"                               // controls watchdog timer (we want to turn it off)
-#include "SIMCOM_Lite.h"                           // Autobaud 28Oct20
+//#include "SIMCOM_Lite.h"                           // Autobaud 28Oct20
 
 
 // ------- Assign Pins ----------------------------------------------------
@@ -91,7 +92,7 @@
   
 // ------- Declare Variables -----------------------------------------------
   
-  char VERSION[] = "V2020.10.29";
+  char VERSION[] = "V2020.11.16";
 
 //-----*** Site/Gateway Identifier ***-----
 
@@ -109,7 +110,7 @@
   #define EEPROM_NODEIDS              (7 + EEPROMSHIFT)         // first storage location for nodeIDs array           (was nodeIDsMem)
   #define EEPROM_DEVKEY               (20 + EEPROMSHIFT)        // first storage location for device key array        (was devkeyMem)
   #define EEPROM_ALRM2_INT            (30 + EEPROMSHIFT)        // storage location for uploadInt                     (was alarm2Mem)  
-  #define EEPROM_BAUDCHECK            (40 + EEPROMSHIFT)        // store whether or not cell baud rate has already been checked and set to 57600
+//  #define EEPROM_BAUDCHECK            (40 + EEPROMSHIFT)        // store whether or not cell baud rate has already been checked and set to 57600
   #define EEPROM_OPTSRADIO            17 
   #define EEPROM_SERIALNUM            10
   #define EEPROM_iSolarRes            48
@@ -138,7 +139,7 @@
 //---*** Counters and Flags ***---
 
   byte    i;                                     // counter for user input functions
-  bool    init1 = true;                          // flag for initial synchronization (fiedSync() on startup)
+  bool    init1 = true;                          // flag for initial synchronization (fieldSync() on startup)
 //  byte    retries = 0;                           // counts number or retries for getting NIST time during fieldSync()
   bool    duringInit = true;                     // controls sending init message to Hologram in syncNodes() and daily sync check in NISTtime()
   bool    radioSwitch;                           // flag for using default radio ID or active radio ID
@@ -242,8 +243,8 @@
   uint8_t answer;                                   // flag for matching expected response to actual response (sendATcommand())
   char    aux_str[FONA_MSG_SIZE];                   // buffer for compiling AT commands
   boolean fonaON = false;                           // flag for cellular module power status
-  uint16_t setbaudrate = 57600;
-  uint32_t oldbaudrate;
+//  uint16_t setbaudrate = 57600;
+//  uint32_t oldbaudrate;
   
   //-- Network settings
   
@@ -268,7 +269,7 @@
   HardwareSerial *fonaSerial = &Serial1;              // initialize serial port for comm to SIM5320    
   Adafruit_FONA_3G fona = Adafruit_FONA_3G(Fona_RST); // initialize cellular module object
   
-  SimCom *CellModem;  // autobaud lib 28Oct20
+//  SimCom *CellModem;  // autobaud lib 28Oct20
   
   File myfile;    // initialize object for sensor data file 
   File dump;      // initialize object for dump file
@@ -300,11 +301,11 @@ void setup()
 
   randomSeed(analogRead(4));                      // to randomize IP choices in NISTtime 
 
-  //--- Check cell baud rate if haven't already
+/*  //--- Check cell baud rate if haven't already
   
-  byte baudChecked = EEPROM.read(EEPROM_BAUDCHECK);
+//  byte baudChecked = EEPROM.read(EEPROM_BAUDCHECK);
   
-  if(baudChecked != 1){
+//  if(baudChecked != 1){
     Serial.print("Checking cell modem baud rate... ");
     CellModem = new SimCom(Serial1);  // 28Oct20
     oldbaudrate = CellModem->AutoBaud();
@@ -312,20 +313,21 @@ void setup()
   
     if(oldbaudrate != setbaudrate){
       Serial.print("Setting baud rate... ");
-      if(!CellModem->ChangeBaud(57600)){
+      if(!CellModem->ChangeBaud(setbaudrate)){
         Serial.println("Unable to change baud rate");
       } else {
-        baudChecked = 1;
-        EEPROM.update(EEPROM_BAUDCHECK, baudChecked);
+//        baudChecked = 1;
+//        EEPROM.update(EEPROM_BAUDCHECK, baudChecked);
         Serial.println(" done.");
       }
     } else {
       Serial.println("OK");
-      baudChecked = 1;
-      EEPROM.update(EEPROM_BAUDCHECK, baudChecked);
+//      baudChecked = 1;
+//      EEPROM.update(EEPROM_BAUDCHECK, baudChecked);
     }
-  }
-    
+//  }
+*/ 
+
   if (digitalRead(Fona_PS) == HIGH) {
     toggle();    // if Fona is on, turn it off
   }
@@ -1752,7 +1754,7 @@ void fonaOn() {
   }
 
   if(digitalRead(Fona_PS) == HIGH){
-  fonaSerial->begin(setbaudrate);
+  fonaSerial->begin(4800);
 
   if (! fona.begin(*fonaSerial)) { // turn on cell module
     if (! fona.begin(*fonaSerial)) {    // try again
@@ -1799,10 +1801,10 @@ void fonaOff() {
   delay(500);
  Serial.println();
 Serial.println("fonaOff(): Turning FONA off..."); 
-//  fonaSerial ->end();
+  fonaSerial ->end();
 
 // with John's autobaud:
-  CellModem->end();
+//  CellModem->end();
   delay(1000);
 
 //  toggle();
