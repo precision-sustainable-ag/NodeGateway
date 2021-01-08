@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc. 
    
-   Last edited: October 29, 2020
+   Last edited: January 8, 2021
 
    - Version History -
     
@@ -46,6 +46,8 @@
    Version 2020.10.29 Adds cell module baud rate detection, sets to 57600 instead of 4800
                       Adds solar current and voltage calcs compatible with new hardware
    Version 2020.11.16 Remove autobaud commands (need to set baud rate on new hardware to 4800 with separate sketch)                   
+   Version 2021.01.06 Fix boxTemp_whole and _dec to account for negative temps
+   Version 2021.01.08 Add 10 min interval option 
 */
 
 //===================================================================================================
@@ -92,7 +94,7 @@
   
 // ------- Declare Variables -----------------------------------------------
   
-  char VERSION[] = "V2020.11.16";
+  char VERSION[] = "V2021.01.08";
 
 //-----*** Site/Gateway Identifier ***-----
 
@@ -1248,7 +1250,8 @@ void resetArrays(){
 //--------------- from SD card
 
 void sendDataSD() {
-
+// Try moving code below to inside gStatus == 1
+  
 //  unsigned int pvCurrent = getSolarCurrent();         // get photovoltaic current
 //  float pvVoltage = getSolarVoltage();                // get photovoltaic voltage  
   uint16_t pvCurrent = GetISolar();   // using John's code
@@ -1281,12 +1284,18 @@ void sendDataSD() {
   }
   bv_dec[2] = 0;
   
-  byte boxTemp_whole = boxTemp / 1;
-  int boxTemp_dec = (boxTemp * 100);
+  int boxTemp_whole = boxTemp / 1;   // using byte data type loses negative values!!! changed to int on 01/06/2021
+  int boxTemp_dec;                   // need to account for negative boxTemp values, boxTemp_dec should always be pos
+  if (boxTemp < 0){
+    boxTemp_dec = -(boxTemp * 100);  
+  } else {
+    boxTemp_dec = (boxTemp * 100);  
+  }
+  
   boxTemp_dec = boxTemp_dec % 100;
 
-  char bt_dec[3];
-  if(boxTemp_dec < 10){
+  char bt_dec[3];                   // to add leading 0 if needed
+  if(boxTemp_dec < 10){   
     bt_dec[0] = '0';
     bt_dec[1] = boxTemp_dec + 48;
   } else {
@@ -1318,10 +1327,11 @@ void sendDataSD() {
   myfile = SD.open(datafile, FILE_WRITE);   // save power data to SD
     delay(100);  
   if(myfile){
-    myfile.println(gData); delay(50);
+    myfile.print(gData); 
+    myfile.print("~");delay(50);
     myfile.close();
     delay(200);
-  }
+  } 
    
   fonaOn();
   delay(3000);
@@ -1332,10 +1342,15 @@ void sendDataSD() {
       
   memset(aux_str,0,sizeof(aux_str));
   delay(50);
-
+    uint8_t rssi; 
+    uint8_t dBm;
   if (gStatus == 1) {
     Serial.println("sendDataSD(): Sending data from SD...");    // Send node data 
-     
+    rssi = fona.getRSSI();     // 08Jan21
+    dBm = 113 - 2*rssi;
+    Serial.print("RSSI: -");
+    Serial.println(dBm);
+       
     char c[1];
     int pos = 0;
     c[0] = 0;
@@ -1346,11 +1361,16 @@ void sendDataSD() {
     answer = sendATcommand(tcpinit,"OK\r\n\r\n+CIPOPEN: 0,0",10000); 
 
     if (answer == 1){   
+ 
       char sendtcp[] = "AT+CIPSEND=0,";   // unknown data string length
       Serial.println();
       Serial.print(">> ");
       Serial.println(sendtcp);
       answer = sendATcommand(sendtcp,">",10000); 
+
+     /* uint16_t pvCurrent = GetISolar();   // using John's code
+      float pvVoltage = GetVSolar();
+      char aux_str2[FONA_MSG_SIZE];
       
       timestamp();
       byte len = Timestamp.length()+1;
@@ -1373,8 +1393,14 @@ void sendDataSD() {
       }
       bv_dec[2] = 0;
         
-      byte boxTemp_whole = boxTemp / 1;
-      int boxTemp_dec = (boxTemp * 100);
+      int boxTemp_whole = boxTemp / 1;   // using byte data type loses negative values!!! changed to int on 01/06/2021
+      int boxTemp_dec;                   // need to account for negative boxTemp values, boxTemp_dec should always be pos
+      if (boxTemp < 0){
+        boxTemp_dec = -(boxTemp * 100);  
+      } else {
+        boxTemp_dec = (boxTemp * 100);  
+      }
+      
       boxTemp_dec = boxTemp_dec % 100;
       
       char bt_dec[3];
@@ -1401,8 +1427,25 @@ void sendDataSD() {
       }
       pv_dec[2] = 0;
 
+      uint8_t rssi = fona.getRSSI();     // 08Jan21
+      uint8_t dBm = 113 - 2*rssi;
+  
+      char gData[65];                           // 08Jan21 array for Gateway data, compiled below 
+      sprintf(gData,"%s~%s~%lu~%d.%s~%d.%s~%d~%d.%s~%s", VERSION,projectID, serNum, battV_whole, bv_dec, boxTemp_whole, bt_dec, pvCurrent, pvV_whole, pv_dec, timeSend);
+    
+      if(!SD.begin(SD_CS)){}   
+      delay(20);
+      
+      myfile = SD.open(datafile, FILE_WRITE);   // save power data to SD
+        delay(100);  
+      if(myfile){
+        myfile.println(gData); delay(50);
+        myfile.close();
+        delay(200);
+      }*/
+
       // compile json with Gateway data to send to Hologram
-      sprintf(aux_str, "{\"k\":\"%s\",\"d\":\"%s~%s~%lu~%d.%s~%d.%s~%d~%d.%s~%s\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}%s\r\n\r\n",devicekey,VERSION,projectID,serNum, battV_whole, bv_dec, boxTemp_whole, bt_dec, pvCurrent, pvV_whole, pv_dec, timeSave,serNum,ctrlZ);    
+      sprintf(aux_str, "{\"k\":\"%s\",\"d\":\"%s~%s~%lu~%d.%s~%d.%s~%d~%d.%s~%s~-%d\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}%s\r\n\r\n",devicekey,VERSION,projectID,serNum, battV_whole, bv_dec, boxTemp_whole, bt_dec, pvCurrent, pvV_whole, pv_dec, timeSave,dBm,serNum,ctrlZ);    
     
       delay(60);
       Serial.println();
@@ -1537,13 +1580,24 @@ void sendDataSD() {
   delay(3000); 
   fonaOff();
 
+  if(!SD.begin(SD_CS)){}   
+  delay(20);
+  
+  myfile = SD.open(datafile, FILE_WRITE);   // save power data to SD
+    delay(100);  
+  if(myfile){
+    myfile.println(dBm); 
+    myfile.close();
+    delay(200);
+  }
+
   Serial.println("Done sendData");
   
 }
 
 //--------------- from array if SD fails
 
-void sendDataArray() {
+void sendDataArray() {  // TO DO: Update if moving saving data within if statement works
 
   //unsigned int pvCurrent = getSolarCurrent();
   uint16_t pvCurrent = GetISolar();   // using John's code
@@ -1573,8 +1627,14 @@ void sendDataArray() {
   }
   bv_dec[2] = 0;
   
-  byte boxTemp_whole = boxTemp / 1;
-  int boxTemp_dec = (boxTemp * 100);
+  int boxTemp_whole = boxTemp / 1;   // using byte data type loses negative values!!! changed to int on 01/06/2021
+  int boxTemp_dec;                   // need to account for negative boxTemp values, boxTemp_dec should always be pos
+  if (boxTemp < 0){
+    boxTemp_dec = -(boxTemp * 100);  
+  } else {
+    boxTemp_dec = (boxTemp * 100);  
+  }
+  
   boxTemp_dec = boxTemp_dec % 100;
 
   char bt_dec[3];
@@ -2675,10 +2735,10 @@ void decodeConfig(char config_string[55]){
   Serial.print("interval: ");
   Serial.println(interval);
 
-    if (interval != 15 && interval != 20 && interval != 30 && interval != 60) {   
-      Serial.println(F("ERROR: Invalid interval (every 15, 20, 30, or 60 mins)"));
+    if (interval != 10 && interval != 15 && interval != 20 && interval != 30 && interval != 60) {   
+      Serial.println(F("ERROR: Invalid interval (every 10, 15, 20, 30, or 60 mins)"));
       configOK = false;
-    }
+    }  
 
   //--- get upload interval
 
@@ -2815,24 +2875,25 @@ void uploadInterval(){
 boolean measureInt(){
 
   if(uploadInt == 4){
-   Serial.print(F("Enter measurement interval (15, 20, 30, or 60 mins): "));
+   Serial.print(F("Enter measurement interval (10, 15, 20, 30, or 60 mins): "));
       Serial.flush();
       boolean intSet = false;
       long utimeout = millis() + 10000;
       while(intSet == false && millis() < utimeout){        
         getinput();
-        if (indata != 5 && indata != 15 && indata != 20 && indata != 30 && indata != 60) {
-          Serial.print(F("Invalid interval. Enter measurement interval (15, 20, 30, or 60): "));
+        if (indata != 10 && indata != 15 && indata != 20 && indata != 30 && indata != 60) {
+          Serial.print(F("Invalid interval. Enter measurement interval (10, 15, 20, 30, or 60): "));
           Serial.flush();
         }
-  
-        else if(indata == 15 && numNodes > 2){
+
+        // CODE BELOW NEEDS TESTING  
+        /* else if(indata == 15 && numNodes > 2){   // 08Jan21: numNodes limit for 10 minutes?
           Serial.println(F("ERROR: maximum 2 Nodes at 15 minute interval"));
           Serial.println(F("Please enter another measurement interval: "));
         } else if (indata == 20 && numNodes > 4){
           Serial.println(F("ERROR: maximum 4 Nodes at 20 minute interval"));
           Serial.println(F("Please enter another measurement interval: "));
-        } 
+        } */
 
         else {
           intSet = true;
@@ -2843,22 +2904,24 @@ boolean measureInt(){
         }   
      }
   } else if (uploadInt == 1){
-    Serial.print(F("Enter measurement interval (15, 20, 30, or 60 mins): "));
+    Serial.print(F("Enter measurement interval (10, 15, 20, 30, or 60 mins): "));
       Serial.flush();
       boolean intSet = false;
       while(intSet == false){        
         getinput();
-        if (indata != 5 && indata != 15 && indata != 20 && indata != 30 && indata != 60) {
-          Serial.print(F("Invalid interval. Enter measurement interval (15, 20, 30, or 60): "));
+        if (indata != 10 && indata != 15 && indata != 20 && indata != 30 && indata != 60) {
+          Serial.print(F("Invalid interval. Enter measurement interval (10, 15, 20, 30, or 60): "));
           Serial.flush();
         }
+        // CODE BELOW NEEDS TESTING
+        /*
         else if(indata == 10 && numNodes > 3){
           Serial.println(F("ERROR: maximum 3 Nodes at 10 minute interval"));
           Serial.println(F("Please enter another measurement interval: "));
         } else if(indata == 15 && numNodes > 8){
           Serial.println(F("ERROR: maximum 8 Nodes at 15 minute interval"));
           Serial.println(F("Please enter another measurement interval: "));
-        } 
+        } */
         else {
           intSet = true;
           interval = indata;

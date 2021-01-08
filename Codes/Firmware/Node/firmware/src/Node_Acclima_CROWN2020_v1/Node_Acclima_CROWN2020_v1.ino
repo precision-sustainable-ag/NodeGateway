@@ -26,7 +26,7 @@
    John Anderson, Acclima Inc.
    David Anderson, Acclima Inc.
 
-   Last edited: October 29, 2020
+   Last edited: January 8, 2021
 
    - Version History -
    Version 2020.05.06 fixes issue with data string when a sensor is unresponsive
@@ -47,6 +47,7 @@
    Version 2020.08.04 Removes if(buf[0] == GatewayID) in fieldSync --> rejects transmissions if GatewayID = 50 b/c timestamp starts with char "2" = dec 50
    Version 2020.09.24 Minor edits to decodeConfig when delimiting sensor addresses and depths
    Version 2020.10.29 Adds solar current and voltage calcs compatible with new hardware
+   Version 2021.01.08 Add 10 minute interval option if RH sensor not connected
 */
 
 //===================================================================================================
@@ -87,7 +88,7 @@
   
 //------------- Declare Variables ---------------------------------
   
-  char VERSION[] = "V2020.10.29";
+  char VERSION[] = "V2021.01.08";
 
 //-----*** Identifiers ***-----
 
@@ -423,6 +424,9 @@ void setup() {
   
     if (skipScan) {                                // scan for sensors if haven't already
       SDI12Scan();
+    }
+    if (RHPresent && interval < 15){                // automatically set interval to minimum 15 minutes if RH sensor found
+      interval = 15;
     }
 
   //--- Set alarms ----
@@ -2357,8 +2361,8 @@ void decodeConfig(char config_string[200]) {
     Serial.print("Measurement interval: ");
     Serial.println(interval);
   
-    if (interval != 15 && interval != 20 && interval != 30 && interval != 60) {
-      Serial.println(F("ERROR: Invalid interval (every 15, 20, 30, or 60 mins)"));
+    if (interval != 10 && interval != 15 && interval != 20 && interval != 30 && interval != 60) {
+      Serial.println(F("ERROR: Invalid interval (every 10, 15, 20, 30, or 60 mins)"));
       configOK = false;
     }
   
@@ -2496,14 +2500,21 @@ void changeDefault() {
 
 void measureInt() {
   Serial.println();
-  Serial.print(F("Enter measurement interval (every 15, 20, 30, or 60 mins): "));
+  Serial.print(F("Enter measurement interval (every 10, 15, 20, 30, or 60 mins): "));
   Serial.flush();
   getinput();
-  while (indata != 2 && indata != 5 && indata != 15 && indata != 20 && indata != 30 && indata != 60) {
-    Serial.print(F("Invalid interval. Enter measurement interval (every 15, 20, 30, or 60 mins): "));
+  while (indata != 2 && indata != 5 && indata != 10 && indata != 15 && indata != 20 && indata != 30 && indata != 60) {
+    Serial.print(F("Invalid interval. Enter measurement interval (every 10, 15, 20, 30, or 60 mins): "));
     Serial.flush();
     getinput();
   }
+  
+  while (RHPresent && indata < 15){
+    Serial.println(F("ERROR: minimum 15 minute interval required with RH sensor."));
+    Serial.print(F("Enter new measurement interval(every 10, 15, 20, 30, or 60 mins): "));
+    getinput();
+  }
+  
   interval = indata;
   EEPROM.update(EEPROM_ALRM1_INT, interval);
 }
