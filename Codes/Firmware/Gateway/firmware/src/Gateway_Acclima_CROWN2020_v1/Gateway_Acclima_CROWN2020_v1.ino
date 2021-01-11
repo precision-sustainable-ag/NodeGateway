@@ -1335,22 +1335,40 @@ void sendDataSD() {
    
   fonaOn();
   delay(3000);
-       
+  
+  uint8_t rssi; 
+  uint8_t dBm;
+  rssi = fona.getRSSI();     // 08Jan21
+  dBm = 113 - 2*rssi;
+//    Serial.print("RSSI: -");
+//    Serial.println(dBm);  
+  
+   
   char ctrlZ[2];
        ctrlZ[0] = 0x1A;
        ctrlZ[1] = 0x00;
       
   memset(aux_str,0,sizeof(aux_str));
   delay(50);
-    uint8_t rssi; 
-    uint8_t dBm;
+
   if (gStatus == 1) {
     Serial.println("sendDataSD(): Sending data from SD...");    // Send node data 
     rssi = fona.getRSSI();     // 08Jan21
     dBm = 113 - 2*rssi;
 //    Serial.print("RSSI: -");
 //    Serial.println(dBm);
-       
+
+    if(!SD.begin(SD_CS)){}   
+    delay(20);
+  
+    myfile = SD.open(datafile, FILE_WRITE);   // save power data to SD
+      delay(50);  
+    if(myfile){
+      myfile.println(dBm); 
+      myfile.close();
+      delay(200);
+    }   
+    
     char c[1];
     int pos = 0;
     c[0] = 0;
@@ -1580,16 +1598,16 @@ void sendDataSD() {
   delay(3000); 
   fonaOff();
 
-  if(!SD.begin(SD_CS)){}   
-  delay(20);
-  
-  myfile = SD.open(datafile, FILE_WRITE);   // save power data to SD
-    delay(100);  
-  if(myfile){
-    myfile.println(dBm); 
-    myfile.close();
-    delay(200);
-  }
+//  if(!SD.begin(SD_CS)){}   
+//  delay(20);
+//  
+//  myfile = SD.open(datafile, FILE_WRITE);   // save power data to SD
+//    delay(100);  
+//  if(myfile){
+//    myfile.println(dBm); 
+//    myfile.close();
+//    delay(200);
+//  }
 
   Serial.println("Done sendData");
   
