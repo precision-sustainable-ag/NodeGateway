@@ -47,7 +47,7 @@
                       Adds solar current and voltage calcs compatible with new hardware
    Version 2020.11.16 Remove autobaud commands (need to set baud rate on new hardware to 4800 with separate sketch)                   
    Version 2021.01.06 Fix boxTemp_whole and _dec to account for negative temps
-   Version 2021.01.08 Add 10 min interval option 
+   Version 2021.01.08 Add 10 min interval option, add cellular SS to Gateway data string 
 */
 
 //===================================================================================================
@@ -828,7 +828,7 @@ boolean sendInit(){
     Serial.println(sendtcp);
     answer = sendATcommand(sendtcp,">",10000); 
     
-    sprintf(aux_str, "{\"k\":\"%s\",\"d\":\"%s\",\"t\":[\"%lu\",\"CROWN\",\"init\"]}%s\r\n\r\n",devicekey,toSend,serNum,ctrlZ);   // compile json
+    sprintf(aux_str, "{\"k\":\"%s\",\"d\":\"%s\",\"t\":[\"%lu\",\"init\"]}%s\r\n\r\n",devicekey,toSend,serNum,ctrlZ);   // compile json
     delay(60);
     Serial.println();
     Serial.print(">> ");
@@ -1348,8 +1348,8 @@ void sendDataSD() {
     Serial.println("sendDataSD(): Sending data from SD...");    // Send node data 
     rssi = fona.getRSSI();     // 08Jan21
     dBm = 113 - 2*rssi;
-    Serial.print("RSSI: -");
-    Serial.println(dBm);
+//    Serial.print("RSSI: -");
+//    Serial.println(dBm);
        
     char c[1];
     int pos = 0;
@@ -1667,15 +1667,20 @@ void sendDataArray() {  // TO DO: Update if moving saving data within if stateme
       
   memset(aux_str,0,sizeof(aux_str));
   delay(50);
-
+  uint8_t rssi; 
+  uint8_t dBm;
+  
   if (gStatus == 1) {
     Serial.println("sendDataArray(): Sending data from array...");
+    rssi = fona.getRSSI();     // 08Jan21
+    dBm = 113 - 2*rssi;
+    
     // Send node data          
     char tcpinit[] = "AT+CIPOPEN=0,\"TCP\",\"cloudsocket.hologram.io\",9999";
      answer = sendATcommand(tcpinit,"OK\r\n\r\n+CIPOPEN: 0,0",20000); // needs longer timeout?
         memset(aux_str,0,sizeof(aux_str));
 
-          if (answer == 1){
+    if (answer == 1){
 
      char sendtcp[] = "AT+CIPSEND=0,";   // unknown data string length --> WORKS! COMMA IS 
           Serial.println();
@@ -1691,7 +1696,7 @@ void sendDataArray() {  // TO DO: Update if moving saving data within if stateme
 //      if(!use_siteID){
 //        sprintf(aux_str, "{\"k\":\"%s\",\"d\":\"%s~%lu~%d.%s~%d.%s~%d~%d.%s~%s\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}%s\r\n\r\n",devicekey,VERSION,serNum, battV_whole, bv_dec, boxTemp_whole, bt_dec, pvCurrent, pvV_whole, pv_dec, timeSave,serNum,ctrlZ);   // 14-Feb-2020: use string order consistent with Node
 //      } else {
-        sprintf(aux_str, "{\"k\":\"%s\",\"d\":\"%s~%s~%lu~%d.%s~%d.%s~%d~%d.%s~%s\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}%s\r\n\r\n",devicekey,VERSION,projectID,serNum, battV_whole, bv_dec, boxTemp_whole, bt_dec, pvCurrent, pvV_whole, pv_dec, timeSave,serNum,ctrlZ);   // 6-Mar-2020: include siteID
+        sprintf(aux_str, "{\"k\":\"%s\",\"d\":\"%s~%s~%lu~%d.%s~%d.%s~%d~%d.%s~%s~-%d\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}%s\r\n\r\n",devicekey,VERSION,projectID,serNum, battV_whole, bv_dec, boxTemp_whole, bt_dec, pvCurrent, pvV_whole, pv_dec, timeSave,dBm,serNum,ctrlZ);    
 //      }      
       delay(60);
           Serial.println();
