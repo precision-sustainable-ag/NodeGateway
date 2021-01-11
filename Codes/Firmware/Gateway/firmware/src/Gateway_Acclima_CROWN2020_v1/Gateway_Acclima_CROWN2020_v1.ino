@@ -1342,7 +1342,6 @@ void sendDataSD() {
   dBm = 113 - 2*rssi;
 //    Serial.print("RSSI: -");
 //    Serial.println(dBm);  
-  
    
   char ctrlZ[2];
        ctrlZ[0] = 0x1A;
