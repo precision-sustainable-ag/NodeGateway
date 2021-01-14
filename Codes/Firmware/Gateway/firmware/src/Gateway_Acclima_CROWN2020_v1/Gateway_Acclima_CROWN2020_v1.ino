@@ -699,7 +699,7 @@ bool GetNodeData(String* msg, uint8_t NodeAddr) {
   *msg = ""; 
   if (LoRa.sendtoWait(resp, len_resp, NodeAddr)) {   // send timestamp, which should trigger a data response    
     uint8_t from;
-    if (LoRa.recvMessage(msg, 500, timeoutPacket, &from)) {      
+    if (LoRa.recvMessage(msg, 2000, timeoutPacket, &from)) {  // 14Jan20    
       return true;
     } // end successful reception
   } // end successful transmission
