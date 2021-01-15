@@ -2589,7 +2589,7 @@ void charinput() {
     {
       delay(100);                                  // give time for everything to come in
       numincoming = Serial.available();            // number of incoming bytes
-             Serial.println(numincoming);
+//             Serial.println(numincoming);
       for (byte i = 0; i <= numincoming; i++)           // read in everything
       {
         incomingChar[i] = Serial.read();
