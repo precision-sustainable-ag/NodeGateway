@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc. 
    
-   Last edited: January 8, 2021
+   Last edited: February 1, 2021
 
    - Version History -
     
@@ -48,6 +48,8 @@
    Version 2020.11.16 Remove autobaud commands (need to set baud rate on new hardware to 4800 with separate sketch)                   
    Version 2021.01.06 Fix boxTemp_whole and _dec to account for negative temps
    Version 2021.01.08 Add 10 min interval option, add cellular SS to Gateway data string 
+   Version 2021.01.27 Remove 3 upload retries per string, add resetAlarm1() to Alarm 2 loop, increase netopen timeout to 30000 
+   Version 2021.02.01 Change CIP timeouts to match sendATcommand timeouts (netopen, cipopen, cipsend) 
 */
 
 //===================================================================================================
@@ -94,7 +96,7 @@
   
 // ------- Declare Variables -----------------------------------------------
   
-  char VERSION[] = "V2021.01.08";
+  char VERSION[] = "V2021.02.01";
 
 //-----*** Site/Gateway Identifier ***-----
 
@@ -161,7 +163,7 @@
   #define timeoutACK      120     // This is the wait period after a transmission to recieve an ACK for that one packet. (ACKWait)
   #define timeoutPacket   2000    // this is the wait period to receive one large packet including retries. (PacketWait)
   #define timeoutSmallPkt 1000    // Timeout interval for a small packet (i.e. 20 bytes).  Approx Airtime=timeoutAck.
-  #define TxPower         20      // default 13 dBm, range: +5 to +23
+  #define TxPower         17      // default 13 dBm, range: +2 to +17, 21Jan21 changed from 20 to 17
   
   // ---------------------------------------------------------------------------------------------------------------------------
   // A BRIEF DISCUSSION ON TIMEOUTS:
@@ -200,7 +202,7 @@
   byte    days;
   byte    mnths;
   int     yrs;
-  
+
   tmElements_t tm;
   String Timestamp="";                          // for compiling timestamp into YYYY_MM_DD_hh:mm:ss_UTC format
   
@@ -209,9 +211,10 @@
   byte  interval;                               // user-selected loop interval (minutes), interval for Alarm 1
   byte  alarmMins;                              // minutes value at which Alarm 1 goes off
   byte  uploadInt;                              // # hours between sending data to cloud (Alarm 2)
-  byte  NISTmin = 35;                            // wake-up to receive sensor IDs @ 12:36am Central time (for Alarm 2)
+  byte  NISTmin = 35;                           // wake-up to receive sensor IDs @ 12:36am Central time (for Alarm 2)
   byte  NISThr = 18;
-
+  byte  uploadMins = 3;                         // 4Feb21
+  
   // FOR TESTING
 //  byte  NISTmin = 20;                            // wake-up to receive sensor IDs @ 12:36am Central time (for Alarm 2)
 //  byte  NISThr = 18;
@@ -252,6 +255,9 @@
   
   char  APN[] = "hologram";                         // cellular provider APN
   uint8_t gStatus;                                  // FONA GPRS status
+//  uint32_t netopen_timeout;                       // might not be necessary
+//  uint32_t cipopen_timeout;
+//  uint32_t cipsend_timeout;
 
   //-- for fieldSync
   
@@ -462,6 +468,7 @@ void loop()
       else {
         digitalWrite(LED,HIGH);
         sendDataSD();                       // upload data from DUMP file to Hologram
+        setAlarm1();                        // 27Jan21: just in case upload overlaps interval
         digitalWrite(LED,LOW);
       }
       setAlarm2();
@@ -600,6 +607,7 @@ void fieldSync(){
     sendDataSD(); //29Jun20: send data in dump file
     startTime = millis();
   }
+ 
   Serial.println();
   Serial.println("fieldSync(): Syncing time with Nodes...");
 
@@ -691,19 +699,24 @@ bool GetNodeData(String* msg, uint8_t NodeAddr) {
   for (byte i = 0; i <= len_resp; i++) {             // convert timestamp to uint8_t for sending
     resp[i] = (*msg)[i]; 
   }
+  
 //  for(byte j = 0; j <= len_resp; j++){
 ////    Serial.print(resp[j]);
 //  }
   
 //  Serial.println();
+//  getFreeRAM(); // 21Jan21
+  
   *msg = ""; 
+  
   if (LoRa.sendtoWait(resp, len_resp, NodeAddr)) {   // send timestamp, which should trigger a data response    
     uint8_t from;
-    if (LoRa.recvMessage(msg, 2000, timeoutPacket, &from)) {  // 14Jan20    
+    if (LoRa.recvMessage(msg, 500, timeoutPacket, &from)) {  // 14Jan20. 21Jan21 set back to 500ms    
       return true;
     } // end successful reception
   } // end successful transmission
   *msg = "";
+//  getFreeRAM(); // 21Jan21
   return false;
 }
 
@@ -982,11 +995,11 @@ void setAlarm2(){
       }
       else if (hrs == (NISThr%24)){               // alarm after getting NIST time
         alarm2Hrs = (hrs + 2)%24;
-        alarm2Mins = 4;
+        alarm2Mins = uploadMins;
       }
-      else {                                       // alarm to get data from Nodes
+      else {                                       
         alarm2Hrs = (hrs + uploadInt) % 24;
-        alarm2Mins = 4;  
+        alarm2Mins = uploadMins;  
       }
   } else if (uploadInt == 1){                    // if upload interval is every hour
     if (hrs == NISThr && mins < NISTmin){        // if next alarm should be time to get NIST time
@@ -994,11 +1007,11 @@ void setAlarm2(){
         alarm2Mins = NISTmin;     
     } else if (hrs == NISThr && mins >= NISTmin){ // alarm after getting NIST time
         alarm2Hrs = (NISThr%24)+1;
-        alarm2Mins = 4;
+        alarm2Mins = uploadMins;
     }
-    else {                                       // alarm to get data from Nodes
+    else {                                   
       alarm2Hrs = (hrs + uploadInt) % 24;
-      alarm2Mins = 4;        
+      alarm2Mins = uploadMins;        
     }
   }
 
@@ -1091,7 +1104,9 @@ void getData(){
         nodeData[y] = msg + sep + String(rssi);                  // save the data         
         nodeIdlist[y] = 0;                                       // mark as complete
         Serial.println(nodeData[y]);
+        //getFreeRAM(); // 21Jan21
       }
+      
       else missedOne = true;
     }   // end for loop
   } // end of attempts 
@@ -1201,6 +1216,7 @@ void saveData() {
   if(!SD.begin(SD_CS)){}      
   Serial.println();
   Serial.println("saveData(): Saving data to SD card...");
+//  getFreeRAM(); // 21Jan21
   dataSaved = false;
   delay(50);
 
@@ -1226,6 +1242,7 @@ void saveData() {
     dump.close();
     delay(200);  
     dataSaved = true;   
+//    getFreeRAM(); // 21Jan21
     
   } else {
     Serial.println("ERROR: Failed to Open SD. Sending Data Now...");
@@ -1250,7 +1267,6 @@ void resetArrays(){
 //--------------- from SD card
 
 void sendDataSD() {
-// Try moving code below to inside gStatus == 1
   
 //  unsigned int pvCurrent = getSolarCurrent();         // get photovoltaic current
 //  float pvVoltage = getSolarVoltage();                // get photovoltaic voltage  
@@ -1332,16 +1348,12 @@ void sendDataSD() {
     myfile.close();
     delay(200);
   } 
-   
+//  getFreeRAM(); // 21Jan21 
   fonaOn();
   delay(3000);
   
   uint8_t rssi; 
-  uint8_t dBm;
-  rssi = fona.getRSSI();     // 08Jan21
-  dBm = 113 - 2*rssi;
-//    Serial.print("RSSI: -");
-//    Serial.println(dBm);  
+  uint8_t dBm; 
    
   char ctrlZ[2];
        ctrlZ[0] = 0x1A;
@@ -1354,8 +1366,8 @@ void sendDataSD() {
     Serial.println("sendDataSD(): Sending data from SD...");    // Send node data 
     rssi = fona.getRSSI();     // 08Jan21
     dBm = 113 - 2*rssi;
-//    Serial.print("RSSI: -");
-//    Serial.println(dBm);
+    Serial.print("RSSI: -");
+    Serial.println(dBm);
 
     if(!SD.begin(SD_CS)){}   
     delay(20);
@@ -1367,7 +1379,7 @@ void sendDataSD() {
       myfile.close();
       delay(200);
     }   
-    
+//    getFreeRAM(); // 21Jan21
     char c[1];
     int pos = 0;
     c[0] = 0;
@@ -1384,82 +1396,6 @@ void sendDataSD() {
       Serial.print(">> ");
       Serial.println(sendtcp);
       answer = sendATcommand(sendtcp,">",10000); 
-
-     /* uint16_t pvCurrent = GetISolar();   // using John's code
-      float pvVoltage = GetVSolar();
-      char aux_str2[FONA_MSG_SIZE];
-      
-      timestamp();
-      byte len = Timestamp.length()+1;
-      char timeSend[len]; 
-      Timestamp.toCharArray(timeSend,len); delay(20);
-
-      float boxTemp = getBoxT();
-
-      byte battV_whole = battV / 1;
-      int battV_dec = (battV * 100);
-      battV_dec = battV_dec % 100;
-      
-      char bv_dec[3];
-      if(battV_dec < 10){
-        bv_dec[0] = '0';
-        bv_dec[1] = battV_dec + 48;
-      } else {
-        bv_dec[0] = (battV_dec / 10) + 48;
-        bv_dec[1] = (battV_dec % 10) + 48;
-      }
-      bv_dec[2] = 0;
-        
-      int boxTemp_whole = boxTemp / 1;   // using byte data type loses negative values!!! changed to int on 01/06/2021
-      int boxTemp_dec;                   // need to account for negative boxTemp values, boxTemp_dec should always be pos
-      if (boxTemp < 0){
-        boxTemp_dec = -(boxTemp * 100);  
-      } else {
-        boxTemp_dec = (boxTemp * 100);  
-      }
-      
-      boxTemp_dec = boxTemp_dec % 100;
-      
-      char bt_dec[3];
-      if(boxTemp_dec < 10){
-        bt_dec[0] = '0';
-        bt_dec[1] = boxTemp_dec + 48;
-      } else {
-        bt_dec[0] = (boxTemp_dec / 10) + 48;
-        bt_dec[1] = (boxTemp_dec % 10) + 48;
-      }     
-      bt_dec[2] = 0;
-            
-      byte pvV_whole = pvVoltage / 1;
-      int pvV_dec = (pvVoltage * 100);
-      pvV_dec = pvV_dec % 100;
-      
-      char pv_dec[3];
-      if(pvV_dec < 10){
-        pv_dec[0] = '0';
-        pv_dec[1] = pvV_dec + 48;
-      } else {
-        pv_dec[0] = (pvV_dec / 10) + 48;
-        pv_dec[1] = (pvV_dec % 10) + 48;
-      }
-      pv_dec[2] = 0;
-
-      uint8_t rssi = fona.getRSSI();     // 08Jan21
-      uint8_t dBm = 113 - 2*rssi;
-  
-      char gData[65];                           // 08Jan21 array for Gateway data, compiled below 
-      sprintf(gData,"%s~%s~%lu~%d.%s~%d.%s~%d~%d.%s~%s", VERSION,projectID, serNum, battV_whole, bv_dec, boxTemp_whole, bt_dec, pvCurrent, pvV_whole, pv_dec, timeSend);
-    
-      if(!SD.begin(SD_CS)){}   
-      delay(20);
-      
-      myfile = SD.open(datafile, FILE_WRITE);   // save power data to SD
-        delay(100);  
-      if(myfile){
-        myfile.println(gData); delay(50);
-        myfile.close();
-        delay(200);
-      }*/
 
       // compile json with Gateway data to send to Hologram
       sprintf(aux_str, "{\"k\":\"%s\",\"d\":\"%s~%s~%lu~%d.%s~%d.%s~%d~%d.%s~%s~-%d\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}%s\r\n\r\n",devicekey,VERSION,projectID,serNum, battV_whole, bv_dec, boxTemp_whole, bt_dec, pvCurrent, pvV_whole, pv_dec, timeSave,dBm,serNum,ctrlZ);    
@@ -1532,7 +1468,7 @@ void sendDataSD() {
         char successfulSend[] = "\r\nOK\r\n\r\n+CIPSEND: 0,";
         
         if (dataToSend[0] != 0 && dataToSend[0] != '\n' && dataToSend[0] != '\r') {
-          for (byte i = 1; i <= 3; i++){                                            // try to send data max 3 times
+//          for (byte i = 1; i <= 3; i++){                                            // try to send data max 3 times, removed 27Jan21: takes too long and interferes with faster interval
             if (tcpSent == false){  
               answer = sendATcommand(tcpinit,"OK\r\n\r\n+CIPOPEN: 0,0",10000);      // open TCP socket
               memset(aux_str,0,sizeof(aux_str));
@@ -1575,7 +1511,7 @@ void sendDataSD() {
            }  // end if tcpSent == false
           
            else {}  // move to next attempt            
-          } // end for loop that tries to send 3 times
+//          } // end for loop that tries to send 3 times
         }   // end if dataToSend[0] != 0
             
       c[0] = 0;
@@ -1597,19 +1533,8 @@ void sendDataSD() {
   delay(3000); 
   fonaOff();
 
-//  if(!SD.begin(SD_CS)){}   
-//  delay(20);
-//  
-//  myfile = SD.open(datafile, FILE_WRITE);   // save power data to SD
-//    delay(100);  
-//  if(myfile){
-//    myfile.println(dBm); 
-//    myfile.close();
-//    delay(200);
-//  }
-
   Serial.println("Done sendData");
-  
+//  getFreeRAM(); // 21Jan21
 }
 
 //--------------- from array if SD fails
@@ -1742,7 +1667,7 @@ void sendDataArray() {  // TO DO: Update if moving saving data within if stateme
           Serial.print("dataToSend: ");
           Serial.println(dataToSend);
           
-          for (byte i = 1; i <= 3; i++){    // try to send data max 3 times
+//          for (byte i = 1; i <= 3; i++){    // try to send data max 3 times, removed 27Jan21
             if (tcpSent == false){  
               Serial.print("Sending to Hologram attempt ");
               Serial.println(i);
@@ -1790,7 +1715,7 @@ void sendDataArray() {  // TO DO: Update if moving saving data within if stateme
             
             else { break; }
               
-          } // end for loop that tries to send 3 times
+//          } // end for loop that tries to send 3 times
 
         }   // end if nodeData[index][0] != 0
        
@@ -1861,12 +1786,20 @@ void fonaOn() {
 //  }
   
   delay(3000);
+
+  if(init1){
+    changeTimeout();
+  //  checkTimeout();
+  }
+  
   GPRS_on();
   }
   else {
     fonaON = false;
     Serial.println("ERROR: FONA failed to turn on");
   }
+
+ 
   
 }
 
@@ -1963,7 +1896,7 @@ boolean startGPRS(boolean onoff){
    Serial.println(AT4);
    answer = sendATcommand(AT4,"OK\r\n+NETOPEN:0",20000);  // was 180000
     
-     return true;
+  return true;
   delay(50);
  
   } else {
@@ -2631,10 +2564,10 @@ void decodeConfig(char config_string[55]){
   }
   
 //  Serial.print("Commas at positions ");
-  for(byte q = 0; q < commaCount; q++){
+//  for(byte q = 0; q < commaCount; q++){
 //    Serial.print(commaPos[q]);
 //    Serial.print(" ");
-  }
+//  }
 //  Serial.println();
 
  //--- Get Project ID
@@ -3343,4 +3276,31 @@ void scoutMode(){   // 06Aug20
   } else {
     Serial.println("ERROR: could not turn on cellular module");
   }
+}
+
+void getFreeRAM() {
+  extern uint16_t __heap_start, *__brkval;
+  uint16_t v;
+  uint16_t freeRAM;
+  freeRAM = (uint16_t)&v - (__brkval == 0 ? (uint16_t) &__heap_start : (uint16_t) __brkval);
+  Serial.print("Free RAM: ");
+  Serial.println(freeRAM);
+}
+
+void checkTimeout(){
+  Serial.println();
+  Serial.println("Checking timeouts: ");
+
+  char check[] = "AT+CIPTIMEOUT?";
+  answer = sendATcommand(check, "+CIPTIMEOUT: ", 20000);
+  delay(100);
+}
+
+void changeTimeout(){
+//  Serial.println();
+//  Serial.println("Changing timeouts: ");
+
+  char change[] = "AT+CIPTIMEOUT=21000,10000,10000";
+  answer = sendATcommand(change, "OK", 20000);
+  delay(100);
 }

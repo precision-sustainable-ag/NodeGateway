@@ -26,7 +26,7 @@
    John Anderson, Acclima Inc.
    David Anderson, Acclima Inc.
 
-   Last edited: January 8, 2021
+   Last edited: Febraury 3, 2021
 
    - Version History -
    Version 2020.05.06 fixes issue with data string when a sensor is unresponsive
@@ -48,6 +48,8 @@
    Version 2020.09.24 Minor edits to decodeConfig when delimiting sensor addresses and depths
    Version 2020.10.29 Adds solar current and voltage calcs compatible with new hardware
    Version 2021.01.08 Add 10 minute interval option if RH sensor not connected
+   Version 2021.01.25 Remove numMissed loop
+   Version 2021.02.03 Add delays in concatenating sensor data
 */
 
 //===================================================================================================
@@ -88,7 +90,7 @@
   
 //------------- Declare Variables ---------------------------------
   
-  char VERSION[] = "V2021.01.08";
+  char VERSION[] = "V2021.02.03";
 
 //-----*** Identifiers ***-----
 
@@ -246,7 +248,7 @@
 
 //-----*** LoRa Radio Settings ***-----
 
-  #define     TxPower  20     // options: +5 to +23 (default 13)
+  #define     TxPower  17     // options: +2 to +17 (default 13), 21Jan21 reduce from 20 to 17
   bool radioSwitch;           // tracks if using default radio address or not
 //  unsigned int  radioTimeout = RH_DEFAULT_TIMEOUT;   // changed from 300 ms to 200ms(default)
 //  uint8_t  retryNum = 10; //RH_DEFAULT_RETRIES;            // changed from 20 to 3 (default)
@@ -276,7 +278,7 @@
   #define timeoutPacket   2000    // this is the wait period to receive one large packet including retries. (PacketWait)
   #define timeoutSmallPkt 1000    // Timeout interval for a small packet (i.e. 20 bytes).  Approx Airtime=timeoutAck.
   
-  byte numMissed = 0;             // counter for missed communications with Gateway
+//  byte numMissed = 0;             // counter for missed communications with Gateway
 
 // ------- Initialize ----------------------------------------------------
   
@@ -485,11 +487,11 @@ void loop() {
       sleepNow();
     }
 
-    else if (battLow == true || numMissed >= 3) {   // if battery was low but now ok or Node has missed comm w/ G >= 3 consecutive times
+    /*else if (battLow == true || numMissed >= 3) {   // if battery was low but now ok or Node has missed comm w/ G >= 3 consecutive times
       fieldSync(3605000);  // wait for 1 hr and 5 minutes to get timestamp from Gateway
       readClock();
       resetAlarm(interval);
-    }
+    }*/ // 25Jan21: Removed, more important that Ns continue to record data that can be retrieved later
 
     // scenario 1: No RH sensor, no Gateway (Bare Node w/o G)
 
@@ -1067,9 +1069,9 @@ void fieldSync(uint32_t time2wait) {    // 27-Jan-2020: added time2wait paramete
           battLow = false;
           EEPROM.update(EEPROM_LOW_BATT, battLow);
           done = true;
-        } else if (numMissed >= 3) {
-          numMissed = 0;
-          done = true;
+//        } else if (numMissed >= 3) {
+//          numMissed = 0;            // 25Jan21: What if N doesn't hear from G? N will continue listening and not take data.
+//          done = true;
         } else {
           done = true;
         }
@@ -1142,7 +1144,7 @@ void listenRespond() {
             RTC.write(tm);      // update clock
             delay(5);
             timeUpdated = true;
-            numMissed = 0;      // 25-Mar-2020: only want to track consecutive misses 
+//            numMissed = 0;      // 25-Mar-2020: only want to track consecutive misses 
             Serial.print("Successful time update: ");
             Serial.println(nbuf);
   
@@ -1154,11 +1156,11 @@ void listenRespond() {
   }  // end while loop
 
 //  if (timeUpdated == false) {   // no comm with Gateway
-  if (timeUpdated == false && !duringInit) {   // 13May2020
+ /* if (timeUpdated == false && !duringInit) {   // 13May2020
     numMissed++;
     Serial.print("numMissed: ");
     Serial.println(numMissed);
-  }
+  }*/
   
 }
 
@@ -1179,6 +1181,7 @@ void readSensors() {
     char c = sensorList[i][0];
     rowNum = i;
     measureSDI12(c);
+    delay(30);        // 3Feb21
   }
 
   //remove trailing separator
@@ -1205,6 +1208,7 @@ void measureSDI12(char index) {
   SDI12data = "";         // clear String if not already
   delay(20);
   SDI12data += sensorList[rowNum];    // 4-Mar-2020: use sensor ID instead of address
+  delay(30);              // 3Feb21
   char depth[9];
   byte addrPos;
   bool depthFound = false;
@@ -1383,6 +1387,9 @@ void getResponseSDI12(char index) {
       }
       else {    // if a TDR sensor
         SDI12data += "~-999~-999~-999~-999~-999";
+        #ifdef getTT && keepPEC
+          SDI12data += "~-999";    // 26Jan21: Need extra placeholder or columns shift
+        #endif  
       }   
     }
   }
@@ -1399,6 +1406,9 @@ void getResponseSDI12(char index) {
     }   
     else {    // if a TDR
       SDI12data += "~-999~-999~-999~-999~-999";
+      #ifdef getTT && keepPEC
+        SDI12data += "~-999";    // 26Jan21: Need extra placeholder or columns shift
+      #endif  
     }   
   }
 
@@ -1514,7 +1524,7 @@ float calcbattV() {
   //  100:                              give the result in centi-volts and therefore allow storing a floating point number in 2 bytes instead of using the 4-byte float.
   //  3 * ADC_MAXVALUE / 2:             for rounding to nearest integer value (leave this off to get the truncated value)
 
-  Serial.println(battV100);
+//  Serial.println(battV100);
   result = battV100 / 100 + float((battV100 % 100))/100;
   return result;
 /*
