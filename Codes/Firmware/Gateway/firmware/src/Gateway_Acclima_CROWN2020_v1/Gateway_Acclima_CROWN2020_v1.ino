@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc. 
    
-   Last edited: February 1, 2021
+   Last edited: February 4, 2021
 
    - Version History -
     
@@ -50,6 +50,7 @@
    Version 2021.01.08 Add 10 min interval option, add cellular SS to Gateway data string 
    Version 2021.01.27 Remove 3 upload retries per string, add resetAlarm1() to Alarm 2 loop, increase netopen timeout to 30000 
    Version 2021.02.01 Change CIP timeouts to match sendATcommand timeouts (netopen, cipopen, cipsend) 
+   Version 2021.02.04 Add uploadMin variable, set to 3 instead of 4
 */
 
 //===================================================================================================
@@ -96,7 +97,7 @@
   
 // ------- Declare Variables -----------------------------------------------
   
-  char VERSION[] = "V2021.02.01";
+  char VERSION[] = "V2021.02.04";
 
 //-----*** Site/Gateway Identifier ***-----
 
