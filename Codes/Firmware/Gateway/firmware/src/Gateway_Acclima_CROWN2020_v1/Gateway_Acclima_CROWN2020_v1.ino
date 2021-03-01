@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc. 
    
-   Last edited: February 4, 2021
+   Last edited: March 1, 2021
 
    - Version History -
     
@@ -51,7 +51,9 @@
    Version 2021.01.27 Remove 3 upload retries per string, add resetAlarm1() to Alarm 2 loop, increase netopen timeout to 30000 
    Version 2021.02.01 Change CIP timeouts to match sendATcommand timeouts (netopen, cipopen, cipsend) 
    Version 2021.02.04 Add uploadMin variable, set to 3 instead of 4
-*/
+   Version 2021.03.01 Reset both alarms in low batt loops, check network status after each uploaded string to prevent lockup if network suddenly fails
+                      Turn off Alarm 1 interrupt during upload, reset Alarm 1 if it went off, turn on interrupt after upload 
+*/                     
 
 //===================================================================================================
 
@@ -97,7 +99,7 @@
   
 // ------- Declare Variables -----------------------------------------------
   
-  char VERSION[] = "V2021.02.04";
+  char VERSION[] = "V2021.03.01";
 
 //-----*** Site/Gateway Identifier ***-----
 
@@ -256,6 +258,7 @@
   
   char  APN[] = "hologram";                         // cellular provider APN
   uint8_t gStatus;                                  // FONA GPRS status
+  uint8_t n;
 //  uint32_t netopen_timeout;                       // might not be necessary
 //  uint32_t cipopen_timeout;
 //  uint32_t cipsend_timeout;
@@ -438,6 +441,7 @@ void loop()
     battV = calcbattV();        // check battery voltage
     if(battV <= lowBatt){       // if battery voltage below low battery limit
       setAlarm1();              // set Alarm 1 to one minute after the "measurement" interval, go to sleep  
+      setAlarm2();              // 23Feb21: set both alarms to stay updated during extended sleeps
       sleepNow();
     } else {
       digitalWrite(LED, HIGH);
@@ -452,6 +456,7 @@ void loop()
   else if (RTC.alarm(ALARM_2)){ // ALARM 2 controls waking up to upload data to Hologram and daily NIST sync
     battV = calcbattV(); 
     if(battV <= lowBatt){       // Again, G will go to sleep if battV too low
+      setAlarm1();              // 23Feb21
       setAlarm2();      
       sleepNow();
     } 
@@ -468,10 +473,10 @@ void loop()
       } 
       else {
         digitalWrite(LED,HIGH);
-        sendDataSD();                       // upload data from DUMP file to Hologram
-        setAlarm1();                        // 27Jan21: just in case upload overlaps interval
+        sendDataSD();                       // upload data from DUMP file to Hologram       
         digitalWrite(LED,LOW);
       }
+      setAlarm1();                        // 27Jan21: just in case upload overlaps interval
       setAlarm2();
     }    
   }   // end if Alarm 2
@@ -620,6 +625,7 @@ void fieldSync(){
 //    Serial.print("Retry ");
 //    Serial.println(retries);
     
+    
     if (digitalRead(Fona_PS) == HIGH){
       timeSuccess = NISTtime();
       fonaOff();
@@ -705,8 +711,9 @@ bool GetNodeData(String* msg, uint8_t NodeAddr) {
 ////    Serial.print(resp[j]);
 //  }
   
-//  Serial.println();
+  
 //  getFreeRAM(); // 21Jan21
+//  Serial.println("GetNodeData: prepare timestamp,");
   
   *msg = ""; 
   
@@ -717,7 +724,10 @@ bool GetNodeData(String* msg, uint8_t NodeAddr) {
     } // end successful reception
   } // end successful transmission
   *msg = "";
+
+  
 //  getFreeRAM(); // 21Jan21
+//  Serial.println("GetNodeData: recvd msg from node");
   return false;
 }
 
@@ -1149,7 +1159,9 @@ boolean NISTtime(){
     sprintf(commandTime, "OK\r\n\r\nRECV FROM:%s UTC(NIST)", ipaddr);
     sendATcommand(gettime,commandTime,10000, response);  
     parseResponse(response);      // decode response from NIST and update clock
-    
+
+//    getFreeRAM();
+//    Serial.println("NISTtime: recvd and decoded timestamp");
   } else { 
     delay(500);
     Serial.println("ERROR: No connection to network. Network time update unsuccessful.");
@@ -1236,6 +1248,8 @@ void saveData() {
       Serial.println(nodeData[j]);
       delay(100);
       Serial.println("----Data----");
+//      getFreeRAM();
+//      Serial.println("saveData: saved string to dump & data files");
     }
       
     myfile.close();
@@ -1243,11 +1257,14 @@ void saveData() {
     dump.close();
     delay(200);  
     dataSaved = true;   
+    
 //    getFreeRAM(); // 21Jan21
+//    Serial.println("saveData: closed SD card");
     
   } else {
     Serial.println("ERROR: Failed to Open SD. Sending Data Now...");
     sendDataArray();        // upload data immediately to Hologram if SD fails
+    setAlarm2();      // 22Feb21
   }
 }
 
@@ -1268,7 +1285,10 @@ void resetArrays(){
 //--------------- from SD card
 
 void sendDataSD() {
-  
+
+  if(!init1){
+    RTC.alarmInterrupt(ALARM_1, false);          // turn on alarm 1 interrupt 
+  }
 //  unsigned int pvCurrent = getSolarCurrent();         // get photovoltaic current
 //  float pvVoltage = getSolarVoltage();                // get photovoltaic voltage  
   uint16_t pvCurrent = GetISolar();   // using John's code
@@ -1350,8 +1370,12 @@ void sendDataSD() {
     delay(200);
   } 
 //  getFreeRAM(); // 21Jan21 
+//  Serial.println("sendDataSD: saved gateway string to SD");
+  
   fonaOn();
   delay(3000);
+//  getFreeRAM(); // 21Jan21 
+//  Serial.println("sendDataSD: turned cell module on");
   
   uint8_t rssi; 
   uint8_t dBm; 
@@ -1380,7 +1404,10 @@ void sendDataSD() {
       myfile.close();
       delay(200);
     }   
+
 //    getFreeRAM(); // 21Jan21
+//    Serial.println("sendDataSD: save RSSI to SD");
+    
     char c[1];
     int pos = 0;
     c[0] = 0;
@@ -1413,10 +1440,13 @@ void sendDataSD() {
       Serial.print(">> ");
       Serial.println(closesocket);
       answer = sendATcommand(closesocket,"OK\r\n\r\n+CIPCLOSE: 0,",5000);
-    
+
+//      getFreeRAM();
+//      Serial.println("sendDataSD: upload gateway data string (not read from SD)");
+      
       delay(20);
-      while (eof != -1) {  
-        if (!SD.exists(dumpfile)) {
+      while (eof != -1 && n == 5) {     //25Feb21: added n==5   
+         if (!SD.exists(dumpfile)) {
           Serial.println("ERROR: No Data in SD to Send");
           delay(50);
           return;
@@ -1426,6 +1456,9 @@ void sendDataSD() {
           delay(50);
           return;
         }
+
+//        getFreeRAM();
+//        Serial.println("sendDataSD: open dump file");
         
         char dataToSend[FONA_MSG_SIZE];
         memset(dataToSend, 0, sizeof(dataToSend));
@@ -1497,7 +1530,9 @@ void sendDataSD() {
                   tcpSent = true;
                 } 
               }
-            
+
+//              getFreeRAM();
+//              Serial.println("sendDataSD: send node string while socket open");
 //              Serial.print("tcpSent = ");
 //              Serial.println(tcpSent);
             
@@ -1506,11 +1541,14 @@ void sendDataSD() {
               Serial.print(">> ");
               Serial.println(closesocket);
               answer = sendATcommand(closesocket,"OK\r\n\r\n+CIPCLOSE: 0,",5000);
+//
+//              getFreeRAM();
+//              Serial.println("sendDataSD: socket closed");
+              
               } else {
                 Serial.println("ERROR: Failed to connect to Hologram");
               }
            }  // end if tcpSent == false
-          
            else {}  // move to next attempt            
 //          } // end for loop that tries to send 3 times
         }   // end if dataToSend[0] != 0
@@ -1518,12 +1556,19 @@ void sendDataSD() {
       c[0] = 0;
       dump.close();
       delay(100);
+
+      n = fona.getNetworkStatus(); // 22Feb21
+//      getFreeRAM();
+//      Serial.println("sendDataSD: query network status");
+      
     }  // end while !eof loop
       
       delay(100);
-      if (SD.remove(dumpfile))
+      if (SD.remove(dumpfile)){
         Serial.println("File Cleared");
-      else
+//        getFreeRAM();
+//        Serial.println("sendDataSD: dump file removed");
+      } else
         Serial.println("File Clear Failed");
       delay(50);
    } else {
@@ -1534,8 +1579,14 @@ void sendDataSD() {
   delay(3000); 
   fonaOff();
 
+  // Check Alarm 1
+  if(!init1){
+    if(RTC.alarm(ALARM_1)) setAlarm1(); 
+    RTC.alarmInterrupt(ALARM_1, true);          // turn on alarm 1 interrupt 
+  }
   Serial.println("Done sendData");
 //  getFreeRAM(); // 21Jan21
+//  Serial.println("sendDataSD: cell module off");
 }
 
 //--------------- from array if SD fails
@@ -1834,7 +1885,10 @@ Serial.println("fonaOff(): Turning FONA off...");
 
 boolean startGPRS(boolean onoff){
       
- uint8_t n = fona.getNetworkStatus();
+// uint8_t n = fona.getNetworkStatus();
+//  getNetworkStatFull();  // 23Feb21
+  
+  n = fona.getNetworkStatus(); // 22Feb21: make n a global variable instead of local
   delay(1000);
    Serial.print(F("Network status "));
         Serial.print(n);
@@ -1927,6 +1981,7 @@ if (!startGPRS(true)) {
   else {
     Serial.println(F("GPRS on"));
     gStatus = 1;
+//    getNetworkStatFull();  // 23Feb21
   }
   delay(3000);
 }
@@ -1980,7 +2035,7 @@ int8_t sendATcommand(char* ATcommand, char* expected_answer1, unsigned int timeo
       else
       {
         response[x] = Serial1.read();
-//        Serial.print(response[x]);
+        Serial.print(response[x]);
         x++;
       }
       // check if the desired answer is in the response of the module
@@ -3285,7 +3340,8 @@ void getFreeRAM() {
   uint16_t freeRAM;
   freeRAM = (uint16_t)&v - (__brkval == 0 ? (uint16_t) &__heap_start : (uint16_t) __brkval);
   Serial.print("Free RAM: ");
-  Serial.println(freeRAM);
+  Serial.print(freeRAM);
+  Serial.print(',');
 }
 
 void checkTimeout(){
@@ -3304,4 +3360,49 @@ void changeTimeout(){
   char change[] = "AT+CIPTIMEOUT=21000,10000,10000";
   answer = sendATcommand(change, "OK", 20000);
   delay(100);
+}
+
+void getNetworkStatFull(){
+  
+  Serial.println("get full Network status");
+  
+  char nstat[] = "AT+CPSI?";
+  unsigned long timeout = 10000;
+  uint8_t x = 0;
+  unsigned long previous;
+
+  memset(response, '\0', 100);    // Initialize the string
+
+  delay(100);
+
+  while ( Serial1.available() > 0) Serial1.read();   // Clean the input buffer
+  Serial1.println(nstat);    // Send the AT command
+
+  x = 0;
+  previous = millis();
+
+  // this loop waits for the answer
+  do {
+    if (Serial1.available() != 0) {
+      if (x == 100)
+      {
+        strncpy(response, response + 1, 99);
+        response[99] = Serial1.read();
+      }
+      else
+      {
+        response[x] = Serial1.read();
+        Serial.print(response[x]);
+        x++;
+      }     
+    }
+    // Waits for the asnwer with time out
+  }
+   
+  while (((millis() - previous) < timeout));
+
+  delay(50);
+  Serial.println(response);
+  delay(50);
+
 }
