@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc. 
    
-   Last edited: March 1, 2021
+   Last edited: March 2, 2021
 
    - Version History -
     
@@ -1445,134 +1445,138 @@ void sendDataSD() {
 //      Serial.println("sendDataSD: upload gateway data string (not read from SD)");
       
       delay(20);
-      while (eof != -1 && n == 5) {     //25Feb21: added n==5   
-         if (!SD.exists(dumpfile)) {
-          Serial.println("ERROR: No Data in SD to Send");
-          delay(50);
-          return;
-        }
-        if (!(dump = SD.open(dumpfile, FILE_READ))) {
-          Serial.println("ERROR: File-open Failed");
-          delay(50);
-          return;
-        }
-
-//        getFreeRAM();
-//        Serial.println("sendDataSD: open dump file");
-        
-        char dataToSend[FONA_MSG_SIZE];
-        memset(dataToSend, 0, sizeof(dataToSend));
-        /* Jumps to current position in file */
-        if (!dump.seek(pos)) {
-          eof = -1;
-          dump.close();
-          break;
-        }
-        eof = dump.read(c, 1);
-        if (eof == -1) {  
-          dump.close();
-          break;
-        }
-        int ind = 0;
-        delay(50);
-      
-        while (eof != -1 && c[0] != '\n' && c[0] != 0) {    // populate array with row of data from DUMP file
-          dataToSend[ind++] = c[0];
-          if ((eof = dump.read(c, 1)) == -1)
+      while (eof != -1) {       
+        if(n == 5){     //25Feb21: added n==5, 02Mar21: moved to if statement 
+          if (!SD.exists(dumpfile)) {
+            Serial.println("ERROR: No Data in SD to Send");
+            delay(50);
+            return;
+          }
+          if (!(dump = SD.open(dumpfile, FILE_READ))) {
+            Serial.println("ERROR: File-open Failed");
+            delay(50);
+            return;
+          }
+  
+  //        getFreeRAM();
+  //        Serial.println("sendDataSD: open dump file");
+          
+          char dataToSend[FONA_MSG_SIZE];
+          memset(dataToSend, 0, sizeof(dataToSend));
+          /* Jumps to current position in file */
+          if (!dump.seek(pos)) {
+            eof = -1;
+            dump.close();
             break;
-        }
-      
-        dataToSend[ind-1] = '\0'; // REMOVE CARRIAGE RETURN AT END OF ARRAY
-        delay(50);
-        if (c[0] == '\n' || c[0] == '\r')
-          pos += ind + 1;
-        if (c[0] == 0)
-          eof = -1;
-        Serial.println("Data to send from SD:");
-        Serial.println("-------Start-------");
-        delay(50);
-        Serial.print((int)(dataToSend[0]));
-        Serial.print(" : ");
-        Serial.println(eof);
-        Serial.println("--------End--------");
-        delay(100);
+          }
+          eof = dump.read(c, 1);
+          if (eof == -1) {  
+            dump.close();
+            break;
+          }
+          int ind = 0;
+          delay(50);
         
-        // Do not send anything if blank
-        boolean tcpSent = false;
-        char successfulSend[] = "\r\nOK\r\n\r\n+CIPSEND: 0,";
+          while (eof != -1 && c[0] != '\n' && c[0] != 0) {    // populate array with row of data from DUMP file
+            dataToSend[ind++] = c[0];
+            if ((eof = dump.read(c, 1)) == -1)
+              break;
+          }
         
-        if (dataToSend[0] != 0 && dataToSend[0] != '\n' && dataToSend[0] != '\r') {
-//          for (byte i = 1; i <= 3; i++){                                            // try to send data max 3 times, removed 27Jan21: takes too long and interferes with faster interval
-            if (tcpSent == false){  
-              answer = sendATcommand(tcpinit,"OK\r\n\r\n+CIPOPEN: 0,0",10000);      // open TCP socket
-              memset(aux_str,0,sizeof(aux_str));
-
-            if (answer == 1){
-              char sendtcp[] = "AT+CIPSEND=0,";                                     // unknown data string length
-              Serial.println();
-              Serial.print(">> ");
-              Serial.println(sendtcp);
-              answer = sendATcommand(sendtcp,">",5000);                             // send request to send data
-
-              // compile data into a json string
-              sprintf(aux_str2, "{\"k\":\"%s\",\"d\":\"%s\",\"t\":[\"%lu\",\"NODE_DATA\"]}%s\r\n\r\n",devicekey,dataToSend,serNum,ctrlZ);
-              delay(60);
-              Serial.println();
-              Serial.print(">> ");
-              Serial.println(aux_str2);
-              answer = sendATcommand(aux_str2,"OK\r\n\r\n+CIPSEND: 0,", 5000);      // send data
-              memset(aux_str2,0,sizeof(aux_str));                                   // reset array for next line of data
-//              Serial.print("answer = ");
-//              Serial.println(answer);
-
-              for (byte y = 0; y < sizeof(successfulSend); y++){
-                if(response[y] == successfulSend[y]){                               // check response from Hologram confirming receipt
-                  tcpSent = true;
-                } 
-              }
-
-//              getFreeRAM();
-//              Serial.println("sendDataSD: send node string while socket open");
-//              Serial.print("tcpSent = ");
-//              Serial.println(tcpSent);
-            
-              char closesocket[] = "AT+CIPCLOSE=0"; 
-              Serial.println();
-              Serial.print(">> ");
-              Serial.println(closesocket);
-              answer = sendATcommand(closesocket,"OK\r\n\r\n+CIPCLOSE: 0,",5000);
-//
-//              getFreeRAM();
-//              Serial.println("sendDataSD: socket closed");
+          dataToSend[ind-1] = '\0'; // REMOVE CARRIAGE RETURN AT END OF ARRAY
+          delay(50);
+          if (c[0] == '\n' || c[0] == '\r')
+            pos += ind + 1;
+          if (c[0] == 0)
+            eof = -1;
+          Serial.println("Data to send from SD:");
+          Serial.println("-------Start-------");
+          delay(50);
+          Serial.print((int)(dataToSend[0]));
+          Serial.print(" : ");
+          Serial.println(eof);
+          Serial.println("--------End--------");
+          delay(100);
+          
+          // Do not send anything if blank
+          boolean tcpSent = false;
+          char successfulSend[] = "\r\nOK\r\n\r\n+CIPSEND: 0,";
+          
+          if (dataToSend[0] != 0 && dataToSend[0] != '\n' && dataToSend[0] != '\r') {
+  //          for (byte i = 1; i <= 3; i++){                                            // try to send data max 3 times, removed 27Jan21: takes too long and interferes with faster interval
+              if (tcpSent == false){  
+                answer = sendATcommand(tcpinit,"OK\r\n\r\n+CIPOPEN: 0,0",10000);      // open TCP socket
+                memset(aux_str,0,sizeof(aux_str));
+  
+              if (answer == 1){
+                char sendtcp[] = "AT+CIPSEND=0,";                                     // unknown data string length
+                Serial.println();
+                Serial.print(">> ");
+                Serial.println(sendtcp);
+                answer = sendATcommand(sendtcp,">",5000);                             // send request to send data
+  
+                // compile data into a json string
+                sprintf(aux_str2, "{\"k\":\"%s\",\"d\":\"%s\",\"t\":[\"%lu\",\"NODE_DATA\"]}%s\r\n\r\n",devicekey,dataToSend,serNum,ctrlZ);
+                delay(60);
+                Serial.println();
+                Serial.print(">> ");
+                Serial.println(aux_str2);
+                answer = sendATcommand(aux_str2,"OK\r\n\r\n+CIPSEND: 0,", 5000);      // send data
+                memset(aux_str2,0,sizeof(aux_str));                                   // reset array for next line of data
+  //              Serial.print("answer = ");
+  //              Serial.println(answer);
+  
+                for (byte y = 0; y < sizeof(successfulSend); y++){
+                  if(response[y] == successfulSend[y]){                               // check response from Hologram confirming receipt
+                    tcpSent = true;
+                  } 
+                }
+  
+  //              getFreeRAM();
+  //              Serial.println("sendDataSD: send node string while socket open");
+  //              Serial.print("tcpSent = ");
+  //              Serial.println(tcpSent);
               
-              } else {
-                Serial.println("ERROR: Failed to connect to Hologram");
-              }
-           }  // end if tcpSent == false
-           else {}  // move to next attempt            
-//          } // end for loop that tries to send 3 times
-        }   // end if dataToSend[0] != 0
-            
-      c[0] = 0;
-      dump.close();
-      delay(100);
+                char closesocket[] = "AT+CIPCLOSE=0"; 
+                Serial.println();
+                Serial.print(">> ");
+                Serial.println(closesocket);
+                answer = sendATcommand(closesocket,"OK\r\n\r\n+CIPCLOSE: 0,",5000);
+  //
+  //              getFreeRAM();
+  //              Serial.println("sendDataSD: socket closed");
+                
+                } else {
+                  Serial.println("ERROR: Failed to connect to Hologram");
+                }
+             }  // end if tcpSent == false
+             else {}  // move to next attempt            
+  //          } // end for loop that tries to send 3 times
+          }   // end if dataToSend[0] != 0
+              
+        c[0] = 0;
+        dump.close();
+        delay(100);
 
-      n = fona.getNetworkStatus(); // 22Feb21
-//      getFreeRAM();
-//      Serial.println("sendDataSD: query network status");
-      
-    }  // end while !eof loop
+  //      getFreeRAM();
+  //      Serial.println("sendDataSD: query network status");
+        } else {
+          break;
+        }
+        n = fona.getNetworkStatus(); // 22Feb21
+      }  // end while !eof loop
       
       delay(100);
       if (SD.remove(dumpfile)){
         Serial.println("File Cleared");
 //        getFreeRAM();
 //        Serial.println("sendDataSD: dump file removed");
-      } else
-        Serial.println("File Clear Failed");
-      delay(50);
-   } else {
-        Serial.println("Failed to connect to Hologram");
+       } else {
+         Serial.println("File Clear Failed");
+         delay(50);
+       } 
+      } else {
+         Serial.println("Failed to connect to Hologram");
       }
   } // end if gStatus == 1
    
