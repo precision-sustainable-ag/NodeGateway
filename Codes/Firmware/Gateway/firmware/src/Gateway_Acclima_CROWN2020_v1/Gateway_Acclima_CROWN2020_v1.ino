@@ -476,7 +476,7 @@ void loop()
         sendDataSD();                       // upload data from DUMP file to Hologram       
         digitalWrite(LED,LOW);
       }
-      setAlarm1();                        // 27Jan21: just in case upload overlaps interval
+//      setAlarm1();                        // 02Mar21: is within sendDataSD(), not needed here; 27Jan21: just in case upload overlaps interval
       setAlarm2();
     }    
   }   // end if Alarm 2
@@ -1595,7 +1595,7 @@ void sendDataSD() {
 
 //--------------- from array if SD fails
 
-void sendDataArray() {  // TO DO: Update if moving saving data within if statement works
+void sendDataArray() {  
 
   //unsigned int pvCurrent = getSolarCurrent();
   uint16_t pvCurrent = GetISolar();   // using John's code
@@ -1606,9 +1606,6 @@ void sendDataArray() {  // TO DO: Update if moving saving data within if stateme
     float boxTemp = getBoxT();    // added 14-Feb-2020
   
   char aux_str2[FONA_MSG_SIZE];
-         
-  fonaOn();
-  delay(3000);
         
   battV = calcbattV();                            // get Li-ion battery voltage
   byte battV_whole = battV / 1;
@@ -1667,6 +1664,9 @@ void sendDataArray() {  // TO DO: Update if moving saving data within if stateme
   delay(50);
   uint8_t rssi; 
   uint8_t dBm;
+
+  fonaOn();
+  delay(3000);
   
   if (gStatus == 1) {
     Serial.println("sendDataArray(): Sending data from array...");
@@ -1675,7 +1675,7 @@ void sendDataArray() {  // TO DO: Update if moving saving data within if stateme
     
     // Send node data          
     char tcpinit[] = "AT+CIPOPEN=0,\"TCP\",\"cloudsocket.hologram.io\",9999";
-     answer = sendATcommand(tcpinit,"OK\r\n\r\n+CIPOPEN: 0,0",20000); // needs longer timeout?
+     answer = sendATcommand(tcpinit,"OK\r\n\r\n+CIPOPEN: 0,0",10000); // needs longer timeout?
         memset(aux_str,0,sizeof(aux_str));
 
     if (answer == 1){
@@ -1684,7 +1684,7 @@ void sendDataArray() {  // TO DO: Update if moving saving data within if stateme
           Serial.println();
      Serial.print(">> ");
      Serial.println(sendtcp);
-     answer = sendATcommand(sendtcp,">",20000); 
+     answer = sendATcommand(sendtcp,">",10000); 
       
   timestamp();
   byte len1 = Timestamp.length()+1;
@@ -1700,13 +1700,13 @@ void sendDataArray() {  // TO DO: Update if moving saving data within if stateme
           Serial.println();
      Serial.print(">> ");
      Serial.println(aux_str);
-     answer = sendATcommand(aux_str,"OK\r\n\r\n+CIPSEND: 0,",20000);
+     answer = sendATcommand(aux_str,"OK\r\n\r\n+CIPSEND: 0,",5000);
 
      char closesocket[] = "AT+CIPCLOSE=0";
           Serial.println();
      Serial.print(">> ");
      Serial.println(closesocket);
-     answer = sendATcommand(closesocket,"OK\r\n\r\n+CIPCLOSE: 0,",10000);
+     answer = sendATcommand(closesocket,"OK\r\n\r\n+CIPCLOSE: 0,",5000);
 
      for (byte index = 0; index < numNodes; index++){  
                
@@ -1732,7 +1732,7 @@ void sendDataArray() {  // TO DO: Update if moving saving data within if stateme
 //              sprintf(aux_str,"%s\"%s\",9999",tcpinit,ipaddr);
               
               char tcpinit[] = "AT+CIPOPEN=0,\"TCP\",\"cloudsocket.hologram.io\",9999";
-              answer = sendATcommand(tcpinit,"OK\r\n\r\n+CIPOPEN: 0,0",30000); // needs longer timeout?
+              answer = sendATcommand(tcpinit,"OK\r\n\r\n+CIPOPEN: 0,0",10000); // needs longer timeout?
               Serial.println();
               Serial.print(">> ");
               Serial.println(aux_str);
@@ -1742,14 +1742,14 @@ void sendDataArray() {  // TO DO: Update if moving saving data within if stateme
               Serial.println();
               Serial.print(">> ");
               Serial.println(sendtcp);
-              answer = sendATcommand(sendtcp,">",20000);
+              answer = sendATcommand(sendtcp,">",5000);
     
               sprintf(aux_str2, "{\"k\":\"%s\",\"d\":\"%s\",\"t\":[\"%lu\",\"NODE_DATA\"]}%s\r\n\r\n",devicekey,dataToSend,serNum,ctrlZ);
               delay(60);
               Serial.println();
               Serial.print(">> ");
               Serial.println(aux_str2);
-              answer = sendATcommand(aux_str2,"OK\r\n\r\n+CIPSEND: 0,", 20000);
+              answer = sendATcommand(aux_str2,"OK\r\n\r\n+CIPSEND: 0,", 5000);
               Serial.print("answer = ");
               Serial.println(answer);
 
@@ -1765,7 +1765,7 @@ void sendDataArray() {  // TO DO: Update if moving saving data within if stateme
               Serial.println();
               Serial.print(">> ");
               Serial.println(closesocket);
-              answer = sendATcommand(closesocket,"OK\r\n\r\n+CIPCLOSE: 0,",10000);
+              answer = sendATcommand(closesocket,"OK\r\n\r\n+CIPCLOSE: 0,",5000);
               
             }  // end if tcpSent == false
             
@@ -2039,7 +2039,7 @@ int8_t sendATcommand(char* ATcommand, char* expected_answer1, unsigned int timeo
       else
       {
         response[x] = Serial1.read();
-        Serial.print(response[x]);
+//        Serial.print(response[x]);
         x++;
       }
       // check if the desired answer is in the response of the module
