@@ -26,7 +26,7 @@
    John Anderson, Acclima Inc.
    David Anderson, Acclima Inc.
 
-   Last edited: Febraury 3, 2021
+   Last edited: March 9, 2021
 
    - Version History -
    Version 2020.05.06 fixes issue with data string when a sensor is unresponsive
@@ -50,6 +50,7 @@
    Version 2021.01.08 Add 10 minute interval option if RH sensor not connected
    Version 2021.01.25 Remove numMissed loop
    Version 2021.02.03 Add delays in concatenating sensor data
+   Version 2021.03.09 Reset both alarms if battV < 3.4
 */
 
 //===================================================================================================
@@ -90,7 +91,7 @@
   
 //------------- Declare Variables ---------------------------------
   
-  char VERSION[] = "V2021.02.03";
+  char VERSION[] = "V2021.03.09";
 
 //-----*** Identifiers ***-----
 
@@ -482,6 +483,7 @@ void loop() {
 
     if (battV <= lowBatt) {       // if battery low skip measurements, go to sleep, wake up again at next interval
       resetAlarm(interval);
+      resetAlarm2();
       battLow = true;
       EEPROM.update(EEPROM_LOW_BATT, battLow);
       sleepNow();
@@ -592,6 +594,7 @@ void loop() {
     battV = calcbattV();
     if (battV <= lowBatt) {       // if battery low skip loop, go to sleep
       resetAlarm2();
+      resetAlarm(interval);
       battLow = true;
       EEPROM.update(EEPROM_LOW_BATT, battLow);
       sleepNow();
