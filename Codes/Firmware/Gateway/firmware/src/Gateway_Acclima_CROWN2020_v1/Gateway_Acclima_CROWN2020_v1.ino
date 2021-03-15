@@ -1287,7 +1287,7 @@ void resetArrays(){
 void sendDataSD() {
 
   if(!init1){
-    RTC.alarmInterrupt(ALARM_1, false);          // turn on alarm 1 interrupt 
+    RTC.alarmInterrupt(ALARM_1, false);          // turn off alarm 1 interrupt 
   }
 //  unsigned int pvCurrent = getSolarCurrent();         // get photovoltaic current
 //  float pvVoltage = getSolarVoltage();                // get photovoltaic voltage  
@@ -1585,7 +1585,7 @@ void sendDataSD() {
 
   // Check Alarm 1
   if(!init1){
-    if(RTC.alarm(ALARM_1)) setAlarm1(); 
+//    if(RTC.alarm(ALARM_1)) setAlarm1(); // 15Mar21: NOOO!!!
     RTC.alarmInterrupt(ALARM_1, true);          // turn on alarm 1 interrupt 
   }
   Serial.println("Done sendData");
