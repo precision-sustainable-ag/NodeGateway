@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc. 
    
-   Last edited: March 2, 2021
+   Last edited: March 15, 2021
 
    - Version History -
     
@@ -53,6 +53,7 @@
    Version 2021.02.04 Add uploadMin variable, set to 3 instead of 4
    Version 2021.03.01 Reset both alarms in low batt loops, check network status after each uploaded string to prevent lockup if network suddenly fails
                       Turn off Alarm 1 interrupt during upload, reset Alarm 1 if it went off, turn on interrupt after upload 
+           2021.03.15 Remove command to turn on (or off! <= PROBLEM) Alarm 1 at end of senddataSD that was leftover from testing           
 */                     
 
 //===================================================================================================
@@ -99,7 +100,7 @@
   
 // ------- Declare Variables -----------------------------------------------
   
-  char VERSION[] = "V2021.03.01";
+  char VERSION[] = "V2021.03.15";
 
 //-----*** Site/Gateway Identifier ***-----
 
