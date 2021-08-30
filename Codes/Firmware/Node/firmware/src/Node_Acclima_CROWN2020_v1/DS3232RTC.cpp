@@ -299,13 +299,7 @@ bool DS3232RTC::alarm(byte alarmNumber)
     uint8_t statusReg, mask;
 
     statusReg = readRTC(RTC_STATUS);
-//    Serial.print("statusReg = ");
-//    Serial.println(statusReg);
-    
     mask = _BV(A1F) << (alarmNumber - 1);
-//    Serial.print("mask = ");
-//    Serial.println(mask);
-    
     if (statusReg & mask)
     {
         statusReg &= ~mask;
@@ -326,7 +320,6 @@ uint8_t DS3232RTC::checkAlmStat()
 
   return statusReg; 
 }
-
 
 // Enable or disable the square wave output.
 // Use a value from the SQWAVE_FREQS_t enumeration for the parameter.

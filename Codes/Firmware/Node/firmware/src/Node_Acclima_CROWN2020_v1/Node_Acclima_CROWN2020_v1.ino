@@ -26,7 +26,7 @@
    John Anderson, Acclima Inc.
    David Anderson, Acclima Inc.
 
-   Last edited: March 9, 2021
+   Last edited: August 3, 2021
 
    - Version History -
    Version 2020.05.06 fixes issue with data string when a sensor is unresponsive
@@ -34,14 +34,14 @@
                       initial sync mode before Gateway does
    Version 2020.05.14 fine tunes initial synchronization with Gateway and daily sync check
    Version 2020.05.19 fixes problem with resetting alarm after daily sync check
-   Version 2020.05.28 removes #ifdef CONT_MEAS statements, fixes issue with repeated sensor measurements after using 
-                      "t" menu option, removes changing depths array during sensor scan to avoid pairing addresses with 
+   Version 2020.05.28 removes #ifdef CONT_MEAS statements, fixes issue with repeated sensor measurements after using
+                      "t" menu option, removes changing depths array during sensor scan to avoid pairing addresses with
                       wrong depths
    Version 2020.06.04 fixes -999 for all sensor depths (uncommented recalling depths array from memory)
                       fix menu option "d" to include sensor addresses in depths array
                       Add travel time to TDR sensor output
    Version 2020.06.22 limits loss of data when measurement int = 15 min, and N gets garbled timestamp at measurement interval
-                      following daily handshake with G (doesn't fix the garbled timestamp)                 
+                      following daily handshake with G (doesn't fix the garbled timestamp)
                       adds if(nYear - 2000 > 0) in listenRespond()
    Version 2020.07.28 Adds radio frequency to menu header
    Version 2020.08.04 Removes if(buf[0] == GatewayID) in fieldSync --> rejects transmissions if GatewayID = 50 b/c timestamp starts with char "2" = dec 50
@@ -51,208 +51,198 @@
    Version 2021.01.25 Remove numMissed loop
    Version 2021.02.03 Add delays in concatenating sensor data
    Version 2021.03.09 Reset both alarms if battV < 3.4
+   Version 2021.04.14 Add one minute to listening if batt < 3.4 or numMissed == 3
+   Version 2021.06.25 Use struct to save sensor metadata (addr, ID, type, meas command, depth), remove saving sensor IDs to Flash
+                      Fix menu option for changing sensor addresses
+                      Add option to print last 10 logs to print data menu option
+                      In config string: 0 for gateway ID = no gateway, fix saving depths
+                      Move numMissed loop to listenRespond
+                      Fix extra ~ in data string if last sensor not a TDR
+                      Initialize depth array in struct with zeroes
+                      Require +/- for depths in config string
+                      Only execute decodeConfig if user enters string
+   Version 2021.06.28 Make depth -999 if sensor address in config string doesn't match what's found in scan
+   Version 2021.07.07 Fixes issue with travel time when sensor address is a number
+   Version 2021.07.15 Add number of outputs to sensor struct
+   Version 2021.08.03 Add print debug statements option
+                      Add yesNo()
+                      Add lowInitBatt flag, skips initial fieldSync if battV is too low and come back to it later
+                      Edit radio timing parameters  
+                      
 */
 
 //===================================================================================================
 
 //------------ Libraries --------------------------------------
-  
-  #include "AcclimaSDI12.h"
-  #include <SPI.h>                                      // SPI functions for Flash chip
-  #include <Wire.h>                                     // I2C functions for RTC
-  #include <EEPROM.h>                                   // built-in EEPROM routines
-  #include <avr/sleep.h>                                // sleep functions
-  #include <DS3232RTC.h>                                // RTC library
-  #include "FlashTools.h"
-  #include <ACReliableMessage.h>                        // Acclima edits of RadioHead library
-  #include <avr/io.h>
-  #include <avr/interrupt.h>
-  #include <avr/wdt.h>                                  // controls watchdog timer (we want to turn it off)
-  #include <stdio.h>
-  #include "GlobalDefs.h"
+
+#include "AcclimaSDI12.h"
+#include <SPI.h>                                      // SPI functions for Flash chip
+#include <Wire.h>                                     // I2C functions for RTC
+#include <EEPROM.h>                                   // built-in EEPROM routines
+#include <avr/sleep.h>                                // sleep functions
+#include "DS3232RTC.h"                                // RTC library
+#include "FlashTools.h"
+#include <ACReliableMessage.h>                        // Acclima edits of RadioHead library
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <avr/wdt.h>                                  // controls watchdog timer (we want to turn it off)
+#include <stdio.h>
+#include "GlobalDefs.h"
 
 //------------- Assign Pins --------------------------------------
 
-  #define SDI12Data           10                       // Pin for SDI-12 sensors; handles interrupts
-  #define SDI12Pwr            0                        // Switches power to SDI-12 sensors on/off
-  #define LED                 15                       // LED on D15
-  #define Flash_SS            23
-  #define baudRate            57600                    // John, 27-Mar-2019: Changed from 115200 to 57600 because when MCU at 8 MHz the sampling resolution is reduced
-  #define pin_SDIv12          1                        // pin 41 --> D1  -- switch SDI-12 power supply to 12 volts (vs. 7.5)
-  #define pin_solarVoltage    A5
-  #define ADC_REF_VOLTAGE     3.3
-  #define ADC_RESOLUTION      1024
-  #define pin_solarShort      A4
-  #define SOLAR_CALIB         1.0                      // This will become a EEPROM constant that is set during factory config – for now just use 1.0
-  #define MAX_SENSORS         16
-  #define getTT                                        // if defined, queries TDRs for travel time 
-  #define keepPEC                                      // if defined, keeps pore water EC in data string, if not, replaces PEC with travel time
-  #define ADC_MAXVALUE        1023
-  
+#define SDI12Data           10                       // Pin for SDI-12 sensors; handles interrupts
+#define SDI12Pwr            0                        // Switches power to SDI-12 sensors on/off
+#define LED                 15                       // LED on D15
+#define Flash_SS            23
+#define baudRate            57600                    // John, 27-Mar-2019: Changed from 115200 to 57600 because when MCU at 8 MHz the sampling resolution is reduced
+#define pin_SDIv12          1                        // pin 41 --> D1  -- switch SDI-12 power supply to 12 volts (vs. 7.5)
+#define pin_solarVoltage    A5
+#define ADC_REF_VOLTAGE     3.3
+#define ADC_RESOLUTION      1024
+#define pin_solarShort      A4
+#define SOLAR_CALIB         1.0                      // This will become a EEPROM constant that is set during factory config – for now just use 1.0
+#define MAX_SENSORS         16
+//  #define getTT                                        // if defined, queries TDRs for travel time
+//  #define keepPEC                                      // if defined, keeps pore water EC in data string, if not, replaces PEC with travel time
+#define ADC_MAXVALUE        1023
+
 //------------- Declare Variables ---------------------------------
-  
-  char VERSION[] = "V2021.03.09";
+
+char VERSION[] = "V2021.08.03";
 
 //-----*** Identifiers ***-----
 
-  char  projectID[6];               // 17-Mar-2020: use project ID to filter incoming data from multiple devices
-  uint8_t  radioID;                 // Active Node radio ID
-  uint8_t  GatewayID;               // Gateway radio ID
-  uint8_t  default_radioID;         // radio ID defaults to last 2 digits of SN
-  FactoryInfo facInfo;              // pull in factory info (serial num, etc) - see GlobalDefs.h
+char  projectID[6];               // 17-Mar-2020: use project ID to filter incoming data from multiple devices
+uint8_t  radioID;                 // Active Node radio ID
+uint8_t  GatewayID;               // Gateway radio ID
+uint8_t  default_radioID;         // radio ID defaults to last 2 digits of SN
+FactoryInfo facInfo;              // pull in factory info (serial num, etc) - see GlobalDefs.h
 
 //-----*** for EEPROM ***-----
-  
-  #define EEPROMSHIFT                 2800                                    
-  #define EEPROM_LOW_BATT             (1 + EEPROMSHIFT)         // flag for tracking if battV < limit
-  #define EEPROM_GATEWAYID            (2 + EEPROMSHIFT)         // storage location for gatewayID                     (was gatewayMem)
-  #define EEPROM_PROJECTID            (18 + EEPROMSHIFT)        // first storage location for projectID array            (was siteIDMem)
-  #define EEPROM_DEFAULT_RADIO        (3 + EEPROMSHIFT)         // static default radio address (last 2 digits of serial number)
-  #define EEPROM_ACTIVE_RADIO         (4 + EEPROMSHIFT)         // active radio address, can be changed by user
-  #define EEPROM_FLAG_RADIO           (5 + EEPROMSHIFT)         // flag to use active address
-  #define EEPROM_ALRM1_INT            (9 + EEPROMSHIFT)         // storage location for Alarm 1 interval              (was intervalMem)
-  #define EEPROM_GW_PRESENT           (14 + EEPROMSHIFT)        // store "1" for yes, "0" for node                    (was gatewayPresMem)
-  #define EEPROM_RH_PRESENT           (16 + EEPROMSHIFT)        //                                                    (was RHPresMem)
-  #define EEPROM_DEPTHS               (24 + EEPROMSHIFT)        // first storage location for depths array
-  
-  #define EEPROM_SERIALNUM            10
-  #define EEPROM_OPTSRADIO            17
-  #define EEPROM_verHW                16  // char 
-  #define EEPROM_optsRadio            17  // char
-  #define EEPROM_iSolarRes            48
-  #define EEPROM_verHW                16
-    
-  bool  gatewayPresent = true;            // flags if user is using a Gateway
-  
-  //The following value is determined by reading EEPROM constant (see method getLoRaFreq())
-  uint16_t LoRaFREQ;
-  
-  uint32_t timeSync = 7200000;            // timeout for initial sync, 14May: 2 hours
-  //uint32_t timeSync = 900000; // 14May for testing 900000 = 15 minutes
-  uint32_t fieldSyncStart;
-  uint32_t fieldSyncStop;
+
+#define EEPROMSHIFT                 2800
+#define EEPROM_LOW_BATT             (1 + EEPROMSHIFT)         // flag for tracking if battV < limit
+#define EEPROM_GATEWAYID            (2 + EEPROMSHIFT)         // storage location for gatewayID                     (was gatewayMem)
+#define EEPROM_PROJECTID            (18 + EEPROMSHIFT)        // first storage location for projectID array            (was siteIDMem)
+#define EEPROM_DEFAULT_RADIO        (3 + EEPROMSHIFT)         // static default radio address (last 2 digits of serial number)
+#define EEPROM_ACTIVE_RADIO         (4 + EEPROMSHIFT)         // active radio address, can be changed by user
+#define EEPROM_FLAG_RADIO           (5 + EEPROMSHIFT)         // flag to use active address
+#define EEPROM_ALRM1_INT            (9 + EEPROMSHIFT)         // storage location for Alarm 1 interval              (was intervalMem)
+#define EEPROM_GW_PRESENT           (14 + EEPROMSHIFT)        // store "1" for yes, "0" for node                    (was gatewayPresMem)
+#define EEPROM_RH_PRESENT           (16 + EEPROMSHIFT)        //                                                    (was RHPresMem)
+#define EEPROM_DEPTHS               (24 + EEPROMSHIFT)        // first storage location for depths array
+#define EEPROM_DEBUG                (240 + EEPROMSHIFT)       // store debug setting
+
+#define EEPROM_SERIALNUM            10
+#define EEPROM_OPTSRADIO            17
+#define EEPROM_verHW                16  // char 
+#define EEPROM_optsRadio            17  // char
+#define EEPROM_iSolarRes            48
+#define EEPROM_verHW                16
+
+bool  gatewayPresent = true;            // flags if user is using a Gateway
+bool  lowInitBatt = false;
+
+//The following value is determined by reading EEPROM constant (see method getLoRaFreq())
+uint16_t LoRaFREQ;
+
+uint32_t timeSync = 7200000;            // timeout for initial sync, 14May: 2 hours
+//uint32_t timeSync = 900000; // 14May for testing 900000 = 15 minutes
+uint32_t fieldSyncStart;
+uint32_t fieldSyncStop;
 
 //-----*** for Flash ***-----
 
-  uint32_t logsBeginAddr = LOG_beginAddr;
-  uint32_t logsEndAddr = LOG_endAddr;
-  const uint32_t IDaddr = 0x001000;   // we will write a list of sensor IDs here (first sector)
-  uint32_t lastIDaddr;                // This shows where the ID List ends
-  uint32_t WAC = 0;                   // This is our Write Access Counter -- keeps track of how many things we write to Flash
-  // Initialize to zero if no record found.  Increment before write.  Persistant - save to log space after erase.
-  // This should never be written as 0 or 0xFFFFFFFF.
-  const uint32_t WAC_Sync_Range = 0x7FFFFFFF;   // if the desired WAC is greater by this amount, consider uploading everything
+uint32_t logsBeginAddr = LOG_beginAddr;
+uint32_t logsEndAddr = LOG_endAddr;
+uint32_t WAC = 0;                   // This is our Write Access Counter -- keeps track of how many things we write to Flash
+// Initialize to zero if no record found.  Increment before write.  Persistant - save to log space after erase.
+// This should never be written as 0 or 0xFFFFFFFF.
+const uint32_t WAC_Sync_Range = 0x7FFFFFFF;   // if the desired WAC is greater by this amount, consider uploading everything
 
 //-----*** for Main Menu ***-----
 
-  int   indata;                       // user input data
-  int   incoming[7];
-  char  incomingChar[200];
-  char  charInput[200];
-  unsigned long serNum;               // eerial number
-  bool skipScan = false;              // tracks if sensor scan was skipped by user
+int   indata;                       // user input data
+int   incoming[7];
+char  incomingChar[200];
+char  charInput[200];
+unsigned long serNum;               // serial number
+bool skipScan = false;              // tracks if sensor scan was skipped by user
+bool debug = false;
 
 //-----*** Data Variables ***-----
 
 //-- SDI-12 addresses and metadata
 
-  char oldAddress = '!';                         // place holder for changing sensor address
-  
-  bool RHPresent = false;                        // tracks presence of RH sensor (RH sensor requires extra routines for heating)
-  char RHsensor;                                 // holds address of RH sensor
-  char Tsensor;                                  // holds address of Temp sensor
-  bool TPresent = false;                         // tracks presence of Temp sensor
-  char CS655addr;                                // holds address of CS655 (CS655s replaced by TDR315Hs in 2019)
-  
-  char activeSDI12[MAX_SENSORS + 1];             // array holding active sensor addresses (up to 16 sensors)
-  byte registerSDI12[MAX_SENSORS] = {            // holds addresses of active SDI12 addresses
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-    0B00000000,
-  };
-  
-  String sensorIDs = "";
-  char sensorList[MAX_SENSORS][36];   // added 4-Mar-2020: 2D array for holding sensor IDs to act as lookup table
-  byte sensorNum = 0;                 // added 4-Mar-2020: counter for writing to 2D array
-  byte rowNum = 0;
-  char depths[MAX_SENSORS][10];
-  char depthsScan[MAX_SENSORS];
-  bool sensorDetected = false;        // added 4-Mar-2020: flag to initiate overwrite of sensor ID memory space
+bool RHPresent = false;                        // tracks presence of RH sensor (RH sensor requires extra routines for heating)
+char RHsensor;                                 // holds address of RH sensor
+char Tsensor;                                  // holds address of Temp sensor
+bool TPresent = false;                         // tracks presence of Temp sensor
+char activeSDI12[MAX_SENSORS + 1];             // array holding active sensor addresses (up to 16 sensors)
+char sensorList[MAX_SENSORS][36];   // added 4-Mar-2020: 2D array for holding sensor IDs to act as lookup table
+byte sensorNum = 0;                 // added 4-Mar-2020: counter for writing to 2D array
+byte rowNum = 0;
+char depths[MAX_SENSORS][7];
+byte sensorTot = 0;
 
 //-- Sensor data
 
-  String SDI12data = "";              // String for compiling data from SDI12 sensors
-  String allData = "";                // String for compiling metadata and sensor data
-  int measDelay;                      // delay for SDI-12 measurement
-  boolean SDI12response = false;
-  char sep = '~';                     // data delimiter
+String allData = "";                // String for compiling metadata and sensor data
+int measDelay;                      // delay for SDI-12 measurement
+boolean SDI12response = false;
+char sep = '~';                     // data delimiter
 
 //-- Onboard Temperature sensor
 
-  float  boxTemp;
+float  boxTemp;
 
 //-- Battery voltage measurement and calc
 
-  float multiplier = 0.00322;         // scaling factor for analogRead
-  float battV;                        // battery voltage
-  float lowBatt = 3.4;                // low battery limit
-  bool  battLow = false;              // tracks if battery V fell below limit
+float multiplier = 0.00322;         // scaling factor for analogRead
+float battV;                        // battery voltage
+float lowBatt = 3.4;                // low battery limit
+bool  battLow = false;              // tracks if battery V fell below limit
 
 //-----*** for Loop ***-----
 
-  bool duringInit = true;
-  bool dataSent = false;
-  bool updated = false;
-  bool userinput = false;
+bool duringInit = true;
+bool dataSent = false;
+bool updated = false;
+bool userinput = false;
 
 //-----*** for RTC ***-----
 
 //-- Time and Date values
-  
-  byte   secs;                  // time and date values
-  byte   mins;
-  byte   hrs;
-  byte   days;
-  byte   mnths;
-  int    yrs;
-  char   TMZ[] = "UTC";         // Time Zone
-  
-  String timestamp = "";
-  tmElements_t tm;
+
+byte   secs;                  // time and date values
+byte   mins;
+byte   hrs;
+byte   days;
+byte   mnths;
+int    yrs;
+
+String timestamp = "";
+tmElements_t tm;
 
 //-- Alarms
-  
-  byte  interval;              // user-defined measurement interval
-  byte  alarmMins;
-  byte  NISTmin = 35;           // 25-Mar-2020: edited to 35 minutes to not collide with heaterOff(), 27-Jan-2020 wake up at 12:35 CST (18:36 UTC) for daily sync check
-  byte  NISThr = 18;
+
+byte  interval;              // user-defined measurement interval
+byte  alarmMins;
+byte  NISTmin = 35;           // 25-Mar-2020: edited to 35 minutes to not collide with heaterOff(), 27-Jan-2020 wake up at 12:35 CST (18:36 UTC) for daily sync check
+byte  NISThr = 18;
 
 // for testing ////
 //byte  NISTmin = 20;           // 27-Jan-2020 wake up at 12:36 CST (18:36 UTC) for daily sync check
 //byte  NISThr = 18;
 ////
 
-  boolean timeUpdated = false;
+boolean timeUpdated = false;
 
 //-----*** LoRa Radio Settings ***-----
 
-  #define     TxPower  17     // options: +2 to +17 (default 13), 21Jan21 reduce from 20 to 17
-  bool radioSwitch;           // tracks if using default radio address or not
-//  unsigned int  radioTimeout = RH_DEFAULT_TIMEOUT;   // changed from 300 ms to 200ms(default)
-//  uint8_t  retryNum = 10; //RH_DEFAULT_RETRIES;            // changed from 20 to 3 (default)
+#define     TxPower  17     // options: +5 to +17 (default 13), 21Jan21 reduce from 20 to 17
+bool radioSwitch;           // tracks if using default radio address or not
 
 /*/ ---------------------------------------------------------------------------------------------------------------------------
   // A BRIEF DISCUSSION ON TIMEOUTS: (added 01/13/2020)
@@ -274,195 +264,204 @@
   //                              This wait should assume a full packet, and that the sender is retrying.
   //                              This should be at minumim: (((AckWait * 2) + PacketAirTime) * NumberOfRetries)
   // ---------------------------------------------------------------------------------------------------------------------------*/
-  #define retryNum        3       // 3 retries should be enough, if our wait intervals are correct
-  #define timeoutACK      120     // This is the wait period after a transmission to receive an ACK for that one packet. (ACKWait)
-  #define timeoutPacket   2000    // this is the wait period to receive one large packet including retries. (PacketWait)
-  #define timeoutSmallPkt 1000    // Timeout interval for a small packet (i.e. 20 bytes).  Approx Airtime=timeoutAck.
-  
-//  byte numMissed = 0;             // counter for missed communications with Gateway
+#define retryNum        3       // 3 retries should be enough, if our wait intervals are correct
+#define timeoutACK      300     // This is the wait period after a transmission to receive an ACK for that one packet. (ACKWait)
+#define timeoutPacket   2000    // this is the wait period to receive one large packet including retries. (PacketWait)
+#define timeoutSmallPkt 1000    // Timeout interval for a small packet (i.e. 20 bytes).  Approx Airtime=timeoutAck.
+
+byte numMissed = 0;             // counter for missed communications with Gateway
 
 // ------- Initialize ----------------------------------------------------
-  
-  RH_RF95 driverRFM95;                                 // Driver for the RFM95 radio
-  ACReliableMessage LoRa(driverRFM95, radioID);        // LoRa radio manager
-  
-  SDI12 SDI12port(SDI12Data);
-  FlashTools ft;
+
+RH_RF95 driverRFM95;                                 // Driver for the RFM95 radio
+ACReliableMessage LoRa(driverRFM95, radioID);        // LoRa radio manager
+
+SDI12 SDI12port(SDI12Data);
+FlashTools ft;
 
 //===================================================================================================
 
 //------------- Set Up ------------------------------------------------------------------------------
 
 void setup() {
- 
+
   //--- Initialize ---
 
-    // Serial
-    
-    Serial.begin(baudRate);
-    delay(100);
-    
-    // SPI & I2C
-    
-    SPI.begin();
-    Wire.begin();                                 
-    delay(300);
-  
-    // Flash
-  
-    if (!ft.init(pin_Flash_CS, 0xC228)) {
-      Serial.println("Flash failed to initialize!");
-      Serial.println("Erasing flash. This may take a few minutes...");
-       ft.chipErase();
-       long fiveMin = 1000 * 60 * 5;
-        if (!ft.wait(fiveMin)) {
-          Serial.println("Five minute timeout expired!");
-          // This is an error condition!  Flash did not complete chip erase within timeout.
-          // Figure out how to handle this error... maybe report it and halt?
-          // Don't remember how long timeout should be but we could measure it
-        }
-    }
+  // Serial
 
-    // RTC
-  
-    RTC.begin();
+  Serial.begin(baudRate);
+  delay(100);
+
+  // SPI & I2C
+
+  SPI.begin();
+  Wire.begin();
+  delay(300);
+
+  // Flash
+
+  if (!ft.init(pin_Flash_CS, 0xC228)) {
+    Serial.println("Flash failed to initialize!");
+    Serial.println("Erasing flash. This may take a few minutes...");
+    ft.chipErase();
+    long fiveMin = 1000 * 60 * 5;
+    if (!ft.wait(fiveMin)) {
+      Serial.println("Five minute timeout expired!");
+      // This is an error condition!  Flash did not complete chip erase within timeout.
+      // Figure out how to handle this error... maybe report it and halt?
+      // Don't remember how long timeout should be but we could measure it
+    }
+  }
+
+  // RTC
+
+  RTC.begin();
 
   //--- Pin Settings ---
 
-    //    pinMode(hardSS,OUTPUT);
-    pinMode(pin_battV, INPUT);
-    pinMode(pin_mBatt, OUTPUT);
-    digitalWrite(pin_mBatt, LOW);
-    pinMode(SDI12Pwr, OUTPUT);
-    digitalWrite(SDI12Pwr, HIGH);
-    pinMode(LED, OUTPUT);
-    digitalWrite(LED, HIGH);
-    pinMode(pin_SDIv12, OUTPUT);
-    digitalWrite(pin_SDIv12, HIGH);  // set SDI-12 power supply to 12V (when to set to 7.5v?)
-    pinMode(pin_solarVoltage, INPUT);
-    pinMode(pin_solarShort, OUTPUT);
-    digitalWrite(pin_solarShort, LOW);
+  //    pinMode(hardSS,OUTPUT);
+  pinMode(pin_battV, INPUT);
+  pinMode(pin_mBatt, OUTPUT);
+  digitalWrite(pin_mBatt, LOW);
+  pinMode(SDI12Pwr, OUTPUT);
+  digitalWrite(SDI12Pwr, HIGH);
+  pinMode(LED, OUTPUT);
+  digitalWrite(LED, HIGH);
+  pinMode(pin_SDIv12, OUTPUT);
+  digitalWrite(pin_SDIv12, HIGH);  // set SDI-12 power supply to 12V (when to set to 7.5v?)
+  pinMode(pin_solarVoltage, INPUT);
+  pinMode(pin_solarShort, OUTPUT);
+  digitalWrite(pin_solarShort, LOW);
 
   //--- Power Saving
 
-    wdt_disable();                        // turn off watchdog timer
-    RTC_osc_off();                         // Turn off 32kHz output
+  wdt_disable();                        // turn off watchdog timer
+  RTC_osc_off();                         // Turn off 32kHz output
 
   //--- Read variables from EEPROM ---
 
-    EEPROM.get(EEPROM_SERIALNUM, serNum);  // get the serial number from EEPROM
-    default_radioID = serNum % 100;
-    EEPROM.update(EEPROM_DEFAULT_RADIO, default_radioID); // set default radio ID
-    //    Serial.println(default_radioID);
-    EEPROM.update(EEPROM_LOW_BATT, battLow);
-  
-    radioSwitch = EEPROM.read(EEPROM_FLAG_RADIO);
-  
-    if (radioSwitch) {
-      radioID = EEPROM.read(EEPROM_ACTIVE_RADIO);                        // read board ID number from EEPROM
-    } else {
-      radioID = default_radioID;
-    }
-  
-    interval = EEPROM.read(EEPROM_ALRM1_INT);
-    GatewayID = EEPROM.read(EEPROM_GATEWAYID);
-    delay(20);
-    gatewayPresent = EEPROM.read(EEPROM_GW_PRESENT);
-    delay(20);
-  
-    // Print device info
-    char* tmpStr = (char*)malloc(100);
-    getDeviceIdStr(tmpStr);
-    Serial.print("\r\n");
-    Serial.println(tmpStr);
-    free(tmpStr);
-    delay(100);
+  EEPROM.get(EEPROM_SERIALNUM, serNum);  // get the serial number from EEPROM
+  default_radioID = serNum % 100;
+  EEPROM.update(EEPROM_DEFAULT_RADIO, default_radioID); // set default radio ID
+  //    Serial.println(default_radioID);
+  EEPROM.update(EEPROM_LOW_BATT, battLow);
+
+  radioSwitch = EEPROM.read(EEPROM_FLAG_RADIO);
+
+  if (radioSwitch) {
+    radioID = EEPROM.read(EEPROM_ACTIVE_RADIO);                        // read board ID number from EEPROM
+  } else {
+    radioID = default_radioID;
+  }
+
+  interval = EEPROM.read(EEPROM_ALRM1_INT);
+  GatewayID = EEPROM.read(EEPROM_GATEWAYID);
+  delay(20);
+  gatewayPresent = EEPROM.read(EEPROM_GW_PRESENT);
+  delay(20);
+
+  // Print device info
+  char* tmpStr = (char*)malloc(100);
+  getDeviceIdStr(tmpStr);
+  Serial.print("\r\n");
+  Serial.println(tmpStr);
+  free(tmpStr);
+  delay(100);
 
   //--- Set up Flash space ---
-    
-    if (!ft.logSetup(logsBeginAddr, logsEndAddr, LOG_minSize, LOG_maxSize, true)) {
-      Serial.println("Erasing flash...");
-      ft.chipErase();
-      ft.logSetup(logsBeginAddr, logsEndAddr, LOG_minSize, LOG_maxSize, true);
-    }
+
+  if (!ft.logSetup(logsBeginAddr, logsEndAddr, LOG_minSize, LOG_maxSize, true)) {
+    Serial.println("Erasing flash...");
+    ft.chipErase();
+    ft.logSetup(logsBeginAddr, logsEndAddr, LOG_minSize, LOG_maxSize, true);
+  }
 
   //--- Radio settings ---
 
-    LoRaFREQ = getLoRaFreq();  
-  
-    if (!LoRa.init(LoRaFREQ, timeoutACK, TxPower, retryNum, radioID)) {      // initialize radio
-      Serial.println("ERROR: radio init failed");
-      return;
-    }
+  LoRaFREQ = getLoRaFreq();
+
+  if (!LoRa.init(LoRaFREQ, timeoutACK, TxPower, retryNum, radioID)) {      // initialize radio
+    Serial.println("ERROR: radio init failed");
+    return;
+  }
 
   //--- Scan SDI-12 Addresses ---
 
-    while (Serial.available()) {
-      Serial.read();
-    }
-    Serial.println("Enter \"S\" to skip SDI-12 bus scan.");
-    Serial.print((char)2);    //STX to indicate to UI software that it needs to send 'S' to skip sensor scan
-    Serial.print("\r\n");
-  
-    long timeout = millis();
-    char skipTest;
-    while ((millis() - timeout) < 7000)
-    {
-      if (Serial.available() > 0)                        // if something typed, go to menu
-      {
-        skipTest = Serial.read();
-        if ((skipTest == 's') || (skipTest == 'S'))
-          skipScan = true;
-        break;
-      }
-    }
+  while (Serial.available()) {
+    Serial.read();
+  }
+  Serial.println("Enter \"S\" to skip SDI-12 bus scan.");
+  Serial.print((char)2);    //STX to indicate to UI software that it needs to send 'S' to skip sensor scan
+  Serial.print("\r\n");
 
-    if (!skipScan) {
-      SDI12Scan();
+  long timeout = millis();
+  char skipTest;
+  while ((millis() - timeout) < 15000)
+  {
+    if (Serial.available() > 0)                        // if something typed, go to menu
+    {
+      skipTest = Serial.read();
+      if ((skipTest == 's') || (skipTest == 'S'))
+        skipScan = true;
+      break;
     }
+  }
+
+  if (!skipScan) {
+    SDI12Scan();
+  }
 
   //--- Go to menu ---
 
-    menu();                                        // display menu on startup
-  
-    if (skipScan) {                                // scan for sensors if haven't already
-      SDI12Scan();
-    }
-    if (RHPresent && interval < 15){                // automatically set interval to minimum 15 minutes if RH sensor found
-      interval = 15;
-    }
+  menu();                                        // display menu on startup
 
-  //--- Set alarms ----
+  if (skipScan) {                                // scan for sensors if haven't already
+    SDI12Scan();
+    depthToStruct();
+  }
+  if (RHPresent && interval < 15) {               // automatically set interval to minimum 15 minutes if RH sensor found
+    interval = 15;
+  }
 
-    // clear alarm registers
-  
-    RTC.setAlarm(ALM1_MATCH_MINUTES, 0, 0, 0, 0); // set alarm values to 0
-    RTC.setAlarm(ALM2_MATCH_MINUTES, 0, 0, 0, 0);
-    RTC.alarm(ALARM_1);                    // turn off alarm 1
-    RTC.alarm(ALARM_2);                    // turn off alarm 2
-    RTC.alarmInterrupt(ALARM_1, true);     // turn on alarm 1 interrupt
-    RTC.alarmInterrupt(ALARM_2, true);     // 27-Jan-2020: turn on alarm 2 interrupt
-    RTC.squareWave(SQWAVE_NONE);           // Use SQW pin as interrupt generator
 
   //--- Time sync in field ---
 
-    if (gatewayPresent) {
-      delay(50);
-      fieldSync(timeSync); 
-      listenRespond();
-      duringInit = false;
-      digitalWrite(LED, LOW);
-    }
+  delay(50);
+  battV = calcbattV();        // check battery voltage
+  if (battV <= lowBatt) {     // if battery voltage below low battery limit
+    lowInitBatt = true;
+  }
+  if (gatewayPresent && !lowInitBatt) {
+    delay(50);
+    fieldSync(timeSync);
+    listenRespond();
+    duringInit = false;
+  }
+  digitalWrite(LED, LOW);
+  
+  //--- Set alarms ----
+
+  // clear alarm registers
+
+  RTC.setAlarm(ALM1_MATCH_MINUTES, 0, 0, 0, 0); // set alarm values to 0
+  RTC.setAlarm(ALM2_MATCH_MINUTES, 0, 0, 0, 0);
+  RTC.alarm(ALARM_1);                    // turn off alarm 1
+  RTC.alarm(ALARM_2);                    // turn off alarm 2
+  RTC.alarmInterrupt(ALARM_1, true);     // turn on alarm 1 interrupt
+  if (gatewayPresent) RTC.alarmInterrupt(ALARM_2, true);     // 27-Jan-2020: turn on alarm 2 interrupt
+  RTC.squareWave(SQWAVE_NONE);           // Use SQW pin as interrupt generator
 
   //--- Set alarm times ---
 
-    readClock();
-    RTC.alarm(ALARM_1);
-    resetAlarm(interval);
+  readClock();
+  RTC.alarm(ALARM_1);
+  resetAlarm(interval);
 
+  if (gatewayPresent){
     RTC.alarm(ALARM_2); // 27-Jan-2020: Use Alarm 2 to wake up for daily sync check
     resetAlarm2();
-
+  }
+  
 }
 
 
@@ -483,17 +482,29 @@ void loop() {
 
     if (battV <= lowBatt) {       // if battery low skip measurements, go to sleep, wake up again at next interval
       resetAlarm(interval);
-      resetAlarm2();
+      if (gatewayPresent) resetAlarm2();
       battLow = true;
       EEPROM.update(EEPROM_LOW_BATT, battLow);
       sleepNow();
     }
-
-    /*else if (battLow == true || numMissed >= 3) {   // if battery was low but now ok or Node has missed comm w/ G >= 3 consecutive times
-      fieldSync(3605000);  // wait for 1 hr and 5 minutes to get timestamp from Gateway
+    else if (lowInitBatt && gatewayPresent){
+      fieldSync(timeSync);
+      listenRespond();
+      duringInit = false;
+      lowInitBatt = false;
       readClock();
       resetAlarm(interval);
-    }*/ // 25Jan21: Removed, more important that Ns continue to record data that can be retrieved later
+      resetAlarm2();
+    }    
+    else if (battLow && gatewayPresent) { // || numMissed == 3) {   // 22Mar21: added back in; if battery was low but now ok or Node has missed comm w/ G >= 3 consecutive times
+      long int_mSecs = (interval + 1) * 60000;
+      RTC.alarmInterrupt(ALARM_2, false);   // turn off alarm 2 interrupt
+      fieldSync(int_mSecs);  // wait for one interval + 1 min to get timestamp from Gateway
+      readClock();
+      resetAlarm(interval);
+      resetAlarm2();
+      //      numMissed = 0;
+    }
 
     // scenario 1: No RH sensor, no Gateway (Bare Node w/o G)
 
@@ -589,8 +600,8 @@ void loop() {
     }
 
   }   // end if Alarm 1
-  
-  else if (RTC.alarm(ALARM_2)) {  // 27-Jan-2020: add daily sync check routine
+
+  else if (RTC.alarm(ALARM_2) && gatewayPresent) {  // 27-Jan-2020: add daily sync check routine
     battV = calcbattV();
     if (battV <= lowBatt) {       // if battery low skip loop, go to sleep
       resetAlarm2();
@@ -638,43 +649,16 @@ void SDI12Scan() {
   Serial.println(F("Scanning for SDI-12 sensors...")); //digitalWrite(LED, HIGH);
   Serial.println();
 
-
-  for (int index = 0; index < 9; index++) activeSDI12[index] = '\0'; delay(50);
-
   for (byte i = '0'; i <= '9'; i++) if (checkActiveSDI12(i)) setActiveSDI12(i); // scan address space 0-9
 
   for (byte i = 'a'; i <= 'z'; i++) if (checkActiveSDI12(i)) setActiveSDI12(i); // scan address space a-z
 
   for (byte i = 'A'; i <= 'Z'; i++) if (checkActiveSDI12(i)) setActiveSDI12(i); // scan address space A-Z
 
-  delay(20);
-
-  // scan address space 0-9
-  for (char i = '0'; i <= '9'; i++) {
-    if (isActiveSDI12(i)) {
-      compileInfoSDI12(i);
-
-    }
-  }
-
-  // scan address space a-z
-  for (char i = 'a'; i <= 'z'; i++) {
-    if (isActiveSDI12(i)) {
-      compileInfoSDI12(i);
-    }
-  }
-
-  // scan address space A-Z
-  for (char i = 'A'; i <= 'Z'; i++) {
-    if (isActiveSDI12(i)) {
-      compileInfoSDI12(i);
-    }
-  }
-
-  saveSDI12Info();
   delay(50);
 
-  Serial.println();
+  printSDI12Info();
+
   Serial.println();
   Serial.println(F("Done"));
   delay(50);
@@ -692,15 +676,15 @@ boolean checkActiveSDI12(char i) {
 
   for (int j = 0; j < 3; j++) {          // goes through three rapid contact attempts
     SDI12port.sendCommand(myCommand);
-    delay(100); 
+    delay(100);
     if (SDI12port.available() >= 1) break;
-    delay(100);  
+    delay(100);
   }
 
   if (SDI12port.available() >= 2) {   // if it hears anything it assumes the address is occupied
     SDI12port.clearBuffer();
     //    Serial.println((char) i);
-    sensorDetected = true;
+    //    sensorDetected = true;
     return true;
   }
   else {
@@ -712,112 +696,63 @@ boolean checkActiveSDI12(char i) {
 
 }
 
-boolean isTakenSDI12(byte i) {
-  i = charToDec(i); // e.g. convert '0' to 0, 'a' to 10, 'Z' to 61.
-  byte j = i / 8;   // byte #
-  byte k = i % 8;   // bit #
-  return registerSDI12[j] & (1 << k); // return bit status
-}
-
-boolean setTakenSDI12(byte i) {
-  boolean initStatusSDI12 = isTakenSDI12(i);
-  i = charToDec(i); // e.g. convert '0' to 0, 'a' to 10, 'Z' to 61.
-  byte j = i / 8;   // byte #
-  byte k = i % 8;   // bit #
-  registerSDI12[j] |= (1 << k);
-  return !initStatusSDI12; // return false if already taken
-}
-
-byte charToDec(char i) {
-  if ((i >= 'a') && (i <= 'z')) return i - 'a' + 10;
-  if ((i >= 'A') && (i <= 'Z')) return i - 'A' + 37;
-}
-
 // gets identification information from a sensor, and prints it to the serial port
 // expects a character between '0'-'9', 'a'-'z', or 'A'-'Z'.
-char compileInfoSDI12(char i) {
+void compileInfoSDI12(char i) {
   SDI12port.clearBuffer();
 
   int j;
   String Command = "";
   Command += (char) i;
   Command += "I!";
-  SDI12port.sendCommand(Command);         // get sensor ID 
+  SDI12port.sendCommand(Command);         // get sensor ID
   delay(565);
 
   byte buf_length = SDI12port.available();
-  char sensorID[36];
   byte x = 0;
 
   for (byte j = 0; j < buf_length; j++) {  // save sensor ID to buffer array and print
     char c = SDI12port.read();
-    sensorIDs += c;
-    delay(8);
     if (c != 10 && c != 13) {
-      sensorList[sensorNum][x] = c;
+      sensorList[sensorTot][x] = c;
       delay(8);
     }
     x++;
   }
 
-  char RHsens[] = "THum";     // Look for RH, T, or CS655
-  char Tsens[] = "Temp";
-  char CSid[] = "CS65";
+  // Populate object with metadata
+  char oldA = allSensors[sensorTot].addr;
+  char newA = sensorList[sensorTot][0];
 
-  if (findSensorType(sensorList[sensorNum], RHsens)) {
-    RHPresent = true;
-    RHsensor = (char) i;
+  if (newA != oldA) {
+    char error[] = "-999";
+    strncpy(allSensors[sensorTot].depth, error, sizeof(error));
   }
-  else if (findSensorType(sensorList[sensorNum], Tsens)) {
-    TPresent = true;
-    Tsensor = (char) i;  
-  }
-  else if (findSensorType(sensorID, CSid)) {
-    CS655addr = (char) i;
-  }
-  else {}
-  sensorNum++;
+
+  allSensors[sensorTot].addr = newA;
+  strncpy(allSensors[sensorTot].ID, sensorList[sensorTot], buf_length);
+  allSensors[sensorTot].ID[buf_length - 2] = 0;
+  //  Serial.print("-- Sensor ");
+  //  Serial.println(allSensors[sensorTot].addr);
+  //  Serial.print("ID: ");
+  //  Serial.println(allSensors[sensorTot].ID);
+
+  findSensorType(sensorList[sensorTot]);
+
   Serial.flush();
 }
 
-void saveSDI12Info() {        // save sensor IDs to Flash 
-  ft.flash_wake();
-  delay(50);
-
-  ft.eraseSector(IDaddr);
-  delay(50);
-
-  int ids_length = sensorIDs.length();
-  char ids[ids_length];
-
-  sensorIDs.toCharArray(ids, ids_length);
-
-  ft.writeBytes(IDaddr, ids, ids_length);
-  delay(300);
-
-  lastIDaddr = IDaddr + ids_length; delay(10);
-
-  printSDI12Info();
-  delay(20);
-  ft.flash_sleep();
-
-}
-
 void printSDI12Info() {         // print sensor IDs
-  for (uint32_t a = IDaddr; a < lastIDaddr; a++) {
-    Serial.print(char(ft.readByte(a)));
+  for (byte a = 0; a < sensorTot; a++) {
+    Serial.println(allSensors[a].ID);
     delay(8);
   }
 }
 
-void setActiveSDI12(char c) {   // save active sensor addresses  
-  for (int index = 0; index < MAX_SENSORS + 1; index++) {
-    if (activeSDI12[index] == '\0') {
-      activeSDI12[index] = c;
-      depthsScan[index] = c;
-      return;
-    }
-  }
+void setActiveSDI12(char c) {   // save active sensor addresses
+  activeSDI12[sensorTot] = c;
+  compileInfoSDI12(c);
+  sensorTot++;
 }
 
 boolean isActiveSDI12(char c) {
@@ -828,32 +763,90 @@ boolean isActiveSDI12(char c) {
   return false;
 }
 
-boolean findSensorType(char fullID[36], char type[5]) {      // Identify RH, T, or CS655 from sensor ID
-  boolean found = false;
-  for (byte i = 0; i < 36; i++) {
-    if (fullID[i] == type[0]) {
-      byte j = 1;
-      byte k = i;
-      while (j < 4) {
-        if (fullID[k + j] != type[j]) {
-          found = false;
-          break;
-        }
-        else {
-          found = true;
-          j++;
-        }
+void findSensorType(char fullID[36]) {      // Identify RH, T, or CS655 from sensor ID
+  bool typeFound = false;
+
+  for (byte j = 0; j < NUM_TYPES; j++) {
+    char * sensor;
+    sensor = strstr(sensorList[sensorTot], sensTypes[j][0]);
+    //        Serial.println(sensTypes[j][0]);
+    //        Serial.println(sensor);
+    char sens_buf[5];
+    for (byte i = 0; i < 4; i++) {
+      sens_buf[i] = sensor[i];
+    }
+    sens_buf[4] = 0;
+    if (strcmp(sens_buf, sensTypes[j][0]) == 0) {
+      strncpy(allSensors[sensorTot].type, sensTypes[j][0], 4);
+      char fullcmd[5];
+      fullcmd[0] = allSensors[sensorTot].addr; delay(10);
+      fullcmd[1] = 0;
+      strcat(fullcmd, sensTypes[j][1]); delay(10);
+      if (fullcmd[2] == '!') {
+        fullcmd[3] = 0;
+      }
+      strncpy(allSensors[sensorTot].cmd, fullcmd, 5); delay(20);
+      uint8_t numout;
+      numout = 10*(sensTypes[j][2][0] - 48) + (sensTypes[j][2][1] - 48);
+//      Serial.print("numout = ");
+//      Serial.println(numout);
+      allSensors[sensorTot].numOut = numout;
+      typeFound = true;
+
+      if (j == 3) {   // if Acclima RH sensor
+        RHsensor = allSensors[sensorTot].addr;
+        RHPresent = true;
+      } else if (j == 2) {   // if Acclima temp sensor
+        Tsensor = allSensors[sensorTot].addr;
+        TPresent = true;
       }
     }
   }
-  if (found == true) {
-    return true;
+
+  if (!typeFound) {
+    strncpy(allSensors[sensorTot].type, "UNKN", 4);
+    char fullcmd[5];
+    fullcmd[0] = allSensors[sensorTot].addr;
+    strcat(fullcmd, READ_CMD_DEFAULT);
+    strncpy(allSensors[sensorTot].cmd, fullcmd, 5);
+    allSensors[sensorTot].numOut = 5;
   }
-  else {
-    return false;
-  }
+
+//    Serial.print("type: ");
+//    Serial.println(allSensors[sensorTot].type);
+//    Serial.print("command: ");
+//    Serial.println(allSensors[sensorTot].cmd);
+//    Serial.print("numOut: ");
+//    Serial.println(allSensors[sensorTot].numOut);
+//    Serial.println();
 }
 
+//===================================================================================================
+
+//--------- Recall depths from EEPROM, save to sensor struct ----------------------------------------
+
+void depthToStruct() {
+
+  EEPROM.get(EEPROM_DEPTHS, depths);
+  delay(20);
+
+  for (byte i = 0; i < sensorTot; i++) {
+    for (byte j = 0; j < sensorTot; j++) {
+      if (depths[i][0] == allSensors[j].addr) {
+        char dpth[6];
+        for (byte c = 0; c < 6; c++) {
+          if ((depths[i][c + 1] >= '0' && depths[i][c + 1] <= '9') || (depths[i][c + 1] == '+') || (depths[i][c + 1] == '-') ) {
+            dpth[c] = depths[i][c + 1];
+          } else {
+            dpth[c] = 0;
+            break;
+          }
+        }
+        strcpy(allSensors[j].depth, dpth);
+      }
+    }
+  }
+}
 //===================================================================================================
 
 //------------- Sleep Functions ---------------------------------------------------------------------
@@ -959,7 +952,7 @@ void readClock()
 
 }
 
-float getBoxT() { 
+float getBoxT() {
   boxTemp = (float)RTC.temperature() / 4.0;
   return boxTemp;
 }
@@ -977,24 +970,29 @@ void resetAlarm(byte n) {
 
   RTC.setAlarm(ALM1_MATCH_MINUTES, 0, alarmMins, 0, 0);
 
-  Serial.print("Next alarm at: ");
-  Serial.println(alarmMins);
+  if (debug){
+    Serial.print("Next alarm at: ");
+    Serial.println(alarmMins);
+  }
   delay(50);
 }
 
 void resetAlarm2() {
-  readClock();
-  RTC.setAlarm(ALM2_MATCH_HOURS, 0, NISTmin, NISThr, 0); // for testing 16Jun2020
-
-// Note for Alarm 2:
-// ALM2_MATCH_HOURS -- causes an alarm when the hours and minutes match.
-// ALM2_MATCH_DATE -- causes an alarm when the date of the month and hours and minutes match.
-
-  Serial.print("Alarm 2 set for: ");
-  Serial.print(NISThr);
-  Serial.print(":");
-  Serial.println(NISTmin);
-  delay(50);
+  if(gatewayPresent){
+    readClock();
+    RTC.setAlarm(ALM2_MATCH_HOURS, 0, NISTmin, NISThr, 0); // for testing 16Jun2020
+  
+    // Note for Alarm 2:
+    // ALM2_MATCH_HOURS -- causes an alarm when the hours and minutes match.
+    // ALM2_MATCH_DATE -- causes an alarm when the date of the month and hours and minutes match.
+    if (debug){
+      Serial.print("Alarm 2 set for: ");
+      Serial.print(NISThr);
+      Serial.print(":");
+      Serial.println(NISTmin);
+      delay(50);
+    }
+  }
 }
 
 //===================================================================================================
@@ -1003,86 +1001,86 @@ void resetAlarm2() {
 
 void fieldSync(uint32_t time2wait) {    // 27-Jan-2020: added time2wait parameter to use function for daily sync check
   uint32_t timeToWait = time2wait;
-  if(duringInit){
+  if (duringInit) {
     fieldSyncStart = millis();
   }
-  
-  if (!LoRa.init(LoRaFREQ, timeoutACK, TxPower, retryNum, radioID)) {       // initialize radio
+
+  if (LoRa.init(LoRaFREQ, timeoutACK, TxPower, retryNum, radioID)) {       // initialize radio
+
+    Serial.println("Waiting to sync with Gateway...");
+
+    uint8_t buf[20];     // array to receive time update from gateway
+    uint8_t len = sizeof(buf);
+    uint8_t from;
+    boolean done = false;
+    uint8_t ok[1];
+    ok[0] = radioID;
+
+    unsigned long waitStart = millis();
+
+    while (((millis() - waitStart) < timeToWait) && (done == false)) {    // 27-Jan-2020: use timeToWait instead of twoHours
+      if (LoRa.recvfromAckTimeout(buf, &len, timeoutSmallPkt, &from)) { // if time update received
+        //          for(byte u = 0; u<len;u++){
+        //          Serial.print((char)buf[u]);
+        //          }
+        //          Serial.println();
+
+        if (len > 1) {   // 04Aug2020: && buf[0] != GatewayID) { <-- CAUSES PROBLEM IF Gateway ID = 50 (char "2" in "2020")
+          String rID = String((char)radioID);
+          LoRa.sendMessage(&rID, GatewayID);   //NOTE: This gives affirmative reception of timestamp without first parsing to ensure it is okay.
+
+          int nYear;
+          int nMonth;
+          int nDay;
+          int nHour;
+          int nMin;
+          int nSec;
+          char *nbuf = (char*)buf;
+          //        Serial.println(nbuf);
+
+          if (sscanf(nbuf, "%d/%d/%d|%d:%d:%d", &nYear, &nMonth, &nDay, &nHour, &nMin, &nSec)) {  // evaluate buffer and set clock to new time
+
+            tm.Year = nYear - 1970;
+            tm.Month = nMonth;
+            tm.Day = nDay;
+            tm.Hour = nHour;
+            tm.Minute = nMin;
+            tm.Second = nSec;
+            RTC.write(tm);      // update clock
+
+            Serial.print("Got timestamp from Gateway:");
+            Serial.println(nbuf);
+            if ((nYear < 2018) || (nYear > 2050)) {
+              Serial.println("Bad timestamp");
+            }
+
+          }  // end if sccanf
+          else {} // 16Jun2020: if timestamp not in correct format, do nothing
+
+          if (duringInit) {
+            readClock();
+            Timestamp();
+            readSensors();
+            compileData();
+            done = true;  // 14May
+          }
+          else if (battLow) {
+            battLow = false;
+            EEPROM.update(EEPROM_LOW_BATT, battLow);
+            done = true;
+            /*} else if (numMissed >= 3) {
+              numMissed = 0;
+              done = true;*/
+          } else {
+            done = true;
+          }
+        }   // end if(len>0)
+      }  // end if transmission received
+    } // end while loop
+  } else {
     Serial.println("Radio failed");
   }
-
-  Serial.println("Waiting to sync with Gateway...");
-
-  uint8_t buf[20];     // array to receive time update from gateway
-  uint8_t len = sizeof(buf);
-  uint8_t from;
-  boolean done = false;
-  uint8_t ok[1];
-  ok[0] = radioID;
-
-  unsigned long waitStart = millis();
-
-  while (((millis() - waitStart) < timeToWait) && (done == false)) {    // 27-Jan-2020: use timeToWait instead of twoHours
-    if (LoRa.recvfromAckTimeout(buf, &len, timeoutSmallPkt, &from)) { // if time update received
-//          for(byte u = 0; u<len;u++){
-//          Serial.print((char)buf[u]);
-//          }
-//          Serial.println();
-
-      if (len > 1){    // 04Aug2020: && buf[0] != GatewayID) { <-- CAUSES PROBLEM IF Gateway ID = 50 (char "2" in "2020")
-        String rID = String((char)radioID);
-        LoRa.sendMessage(&rID, GatewayID);   //NOTE: This gives affirmative reception of timestamp without first parsing to ensure it is okay.
-
-        int nYear;
-        int nMonth;
-        int nDay;
-        int nHour;
-        int nMin;
-        int nSec;
-        char *nbuf = (char*)buf;
-//        Serial.println(nbuf);
-
-        if (sscanf(nbuf, "%d/%d/%d|%d:%d:%d", &nYear, &nMonth, &nDay, &nHour, &nMin, &nSec)) {  // evaluate buffer and set clock to new time
-
-          tm.Year = nYear - 1970;
-          tm.Month = nMonth;
-          tm.Day = nDay;
-          tm.Hour = nHour;
-          tm.Minute = nMin;
-          tm.Second = nSec;
-          RTC.write(tm);      // update clock
-      
-          Serial.print("Got timestamp from Gateway:");
-          Serial.println(nbuf);
-          if ((nYear < 2018) || (nYear > 2050)) {
-            Serial.println("Bad timestamp");
-          }
-
-        }  // end if sccanf
-        else {} // 16Jun2020: if timestamp not in correct format, do nothing
-
-        if (duringInit) {
-          readClock();
-          Timestamp();
-          readSensors();
-          compileData();
-          done = true;  // 14May
-        }
-        else if (battLow) {
-          battLow = false;
-          EEPROM.update(EEPROM_LOW_BATT, battLow);
-          done = true;
-//        } else if (numMissed >= 3) {
-//          numMissed = 0;            // 25Jan21: What if N doesn't hear from G? N will continue listening and not take data.
-//          done = true;
-        } else {
-          done = true;
-        }
-      }   // end if(len>0) 
-    }  // end if transmission received
-  } // end while loop
-
-  if(duringInit){
+  if (duringInit) {
     fieldSyncStop = millis();
   }
 }
@@ -1092,7 +1090,7 @@ void fieldSync(uint32_t time2wait) {    // 27-Jan-2020: added time2wait paramete
 //------------- Listen for timestamp & send data ----------------------------------------------------
 
 void listenRespond() {
- 
+
   SPI.begin();
   delay(200);
 
@@ -1113,11 +1111,15 @@ void listenRespond() {
 
   long timeToWait;
   long start = millis();
-  
+
   if (duringInit) {
     timeToWait = timeSync - (fieldSyncStop - fieldSyncStart) + 1200000; // 15May20 add 20 minutes
     Serial.print("timeToWait = ");
     Serial.println(timeToWait);
+  } else if (numMissed == 3) {
+    long int_mSecs = (interval + 1) * 60000;
+    timeToWait = int_mSecs;
+    RTC.alarmInterrupt(ALARM_2, false);     // turn off alarm 2 interrupt just in case time ~ NIST time
   } else {
     timeToWait = 60000; // 13May20: one minute
   }
@@ -1133,8 +1135,8 @@ void listenRespond() {
         int nHour;
         int nMin;
         int nSec;
-        char *nbuf = (char*)buf; 
-        
+        char *nbuf = (char*)buf;
+
         if (sscanf(nbuf, "%d/%d/%d|%d:%d:%d", &nYear, &nMonth, &nDay, &nHour, &nMin, &nSec)) {  // evaluate buffer and set clock to new time
           if ((nYear - 2000 > 0)) {   // 17Jun20: works to reject garbled timestamp
             tm.Year = nYear - 1970;
@@ -1143,28 +1145,38 @@ void listenRespond() {
             tm.Hour = nHour;
             tm.Minute = nMin;
             tm.Second = nSec;
-  
+
             RTC.write(tm);      // update clock
             delay(5);
             timeUpdated = true;
-//            numMissed = 0;      // 25-Mar-2020: only want to track consecutive misses 
+            numMissed = 0;      // 08-Jul-2021: only want to track consecutive misses
             Serial.print("Successful time update: ");
             Serial.println(nbuf);
-  
+
             LoRa.sendMessage(&allData, GatewayID);
+            readClock();
+          }
         }
-       }
       } // end if(len>0)
-    }  
+    }
   }  // end while loop
 
-//  if (timeUpdated == false) {   // no comm with Gateway
- /* if (timeUpdated == false && !duringInit) {   // 13May2020
-    numMissed++;
+  if (timeUpdated == false && !duringInit) {   // 22Mar21: Added back in, 13May2020
+    if (numMissed >= 3) {
+      uint8_t statusReg = RTC.checkAlmStat();    // check if Alarm 2 went off
+      if (statusReg == 2) {
+        resetAlarm2();
+        RTC.alarm(ALARM_2);
+        RTC.alarmInterrupt(ALARM_2, true);
+      }
+      numMissed = 0;
+    } else {
+      numMissed++;
+    }
     Serial.print("numMissed: ");
     Serial.println(numMissed);
-  }*/
-  
+  }
+
 }
 
 //===================================================================================================
@@ -1173,91 +1185,53 @@ void listenRespond() {
 
 void readSensors() {
 
-  EEPROM.get(EEPROM_DEPTHS, depths);    // 04Jun2020
-  delay(20);
-  
+  //  Serial.println();
+  //  Serial.println("Measuring sensors...");
+  //  Serial.println();
+
+  //  // Add timestamp before sensor data!!!
+  ////  memset(allData,0,sizeof(allData));
+  allData = "";
+  //  char timestamp[] = "timestamp~";
+  ////  strcpy(allData,timestamp);
+  //  allData += timestamp; delay(30);
+
   SDI12port.begin();
   delay(500);
-  allData = "";
-  
-  for (byte i = 0; i < sensorNum; i++) {
-    char c = sensorList[i][0];
+
+  for (byte i = 0; i < sensorTot; i++) {
+    char c = allSensors[i].addr;
     rowNum = i;
+    //    Serial.println();
+    //    Serial.print(F("--> Measuring sensor "));  delay(20);
+    //    Serial.println(allSensors[i].addr);
     measureSDI12(c);
-    delay(30);        // 3Feb21
+    delay(500);
   }
 
-  //remove trailing separator
-  char td[allData.length()];
-  delay(50);
-  allData.toCharArray(td, allData.length());
-  delay(50);
-  td[allData.length()] = '\0';
-  delay(50);
+  //  Serial.println();
+  //  Serial.print("Full data string: ");
+  //  Serial.println(allData);
 
-  allData = String(td);
-
-  delay(50);
-  //    Serial.println(allData);
-  SDI12port.end();  
+  SDI12port.end();
   delay(50);
 
 }
 
 void measureSDI12(char index) {
 
-// Add metadata to data string
-
-  SDI12data = "";         // clear String if not already
-  delay(20);
-  SDI12data += sensorList[rowNum];    // 4-Mar-2020: use sensor ID instead of address
-  delay(30);              // 3Feb21
-  char depth[9];
-  byte addrPos;
-  bool depthFound = false;
-
-  for (byte j = 0; j < sensorNum; j++) {  // added 5-Mar-2020: scroll through depths to find sensor addr (in case row order doesn't match with sensorList)
-    if (depths[j][0] == index) {
-//      Serial.print(index);
-//      Serial.print(',');
-//      Serial.println(j);
-      addrPos = j;
-      depthFound = true;
-    }
+  if (strcmp(allSensors[rowNum].type, "CLIM") == 0) {  // if ClimaVue
+//    numOut = 14;    // specify numOut since parseResp() isn't needed
+    SDI12response = true;
+    delay(100);
+  } else {
+    SDI12port.sendCommand(allSensors[rowNum].cmd);
+    delay(parseResp());
+    SDI12port.clearBuffer();  // <-- DON'T MOVE THIS!
+    delay(50);
   }
-
-  for (byte i = 0; i < 9; i++) {
-    if (depths[addrPos][i + 1] != 0) {      // extract depth from storage array
-      depth[i] = depths[addrPos][i + 1];
-    } else {
-      depth[i] = 0;
-      break;
-    }
-  }
-
-  SDI12data += sep;
-
-  if (depthFound) {
-    SDI12data += depth;
-  }
-   else {
-    SDI12data += "-999";    // added 5-Mar-2020: throw error if depth not found
-  }
-
-  String readData = "";
-  readData += index;
-  readData += "M!";                    // returns address, VWC, Soil T, Permittivity, EC, CEC from Acclima TDRs
-
-  SDI12port.sendCommand(readData);
-
-  delay(parseResp());
-
-  SDI12port.clearBuffer();
-  delay(50);
 
   getResponseSDI12(index);
-  allData += SDI12data + sep;
-  delay(100);
 
 }
 
@@ -1271,24 +1245,27 @@ int parseResp() {
   if (SDI12port.available() > 0) {
     SDI12response = true;
     incomingBytes = SDI12port.available();
-
     char response[incomingBytes];
-
     for ( byte i = 0; i < incomingBytes; i++) {
       response[i] = SDI12port.read();
-      //      Serial.print(response[i],DEC);
     }
 
-    measDelay = (response[3] - 48); // get decimal value of char, convert to milliseconds
+    measDelay = (response[incomingBytes - 4] - 48); // get decimal value of char, convert to milliseconds
     measDelay = measDelay * 1000;
+    //    Serial.print("measDelay = ");
+    //    Serial.println(measDelay);
 
+    if (strcmp(allSensors[rowNum].type,"UNKN") == 0){
+      allSensors[rowNum].numOut = (response[incomingBytes - 3] - 48);  
+    //    Serial.print("numOut = ");
+    //    Serial.println(numOut);
+    }
   } else {
     measDelay = 1000;
     SDI12response = false;
+    //    Serial.println("No response");
   }
 
-  // Serial.println();
-  // Serial.println(measDelay);
   return measDelay;
 
 }
@@ -1298,12 +1275,21 @@ int parseResp() {
 
 void getResponseSDI12(char index) {
 
-  if (SDI12response == true) {       // if a response to M! was received, send D0!
+  char buf[MAX_RESP];
+  bool bufAdded = false;
 
-    String sendData = "";
-    sendData += index;
-    sendData += "D0!";
-    //    Serial.println(sendData);
+  if (SDI12response == true) {       // if a response to M! was received, send D0!
+    char sendData[5];
+    sendData[0] = index;
+    sendData[1] = 0;
+    char snd[4];
+
+    if (strcmp(allSensors[rowNum].type, "CLIM") != 0) {
+      strcpy(snd, "D0!");
+    } else {
+      strcpy(snd, "R7!");
+    }
+    strcat(sendData, snd);
 
     SDI12port.sendCommand(sendData);   // send D0! command to retrieve data
     delay(500);                  // 300 works with TDRs
@@ -1313,113 +1299,154 @@ void getResponseSDI12(char index) {
     // Step 1 -- create char array to receive data --
 
     byte incomingbytes = SDI12port.available();
-    //         Serial.println(incomingbytes);
-    char response[incomingbytes];   // replace trailing CR with NULL and remove LF
+    //    Serial.print("Incoming bytes: "); Serial.println(incomingbytes);
 
-    // Step 3 -- store bytes into array
+    // Step 2 -- store bytes into array
 
-    if (incomingbytes > 5) {
-      for (byte i = 0; i < (incomingbytes); i++) {
-        char c = SDI12port.read();
-        response[i] = c;         // store c in array if not at last byte
-        //               Serial.print(c);
-        delay(15);
-      }    // end for loop
+    byte negNum = 0;
 
-      // Steps 3 & 4 -- 3) take out "address CR LF" response from TDRs; 4) convert array to String, replacing "+" and "-" with delimiter, add in "-"
+    if (incomingbytes > 3) {
+      char responseRaw[SDI12_BUFFER_SIZE];
+      responseRaw[SDI12_BUFFER_SIZE - 1] = 0;
+      //      Serial.print("Raw response of buffer size: ");
+      byte respLen;
 
-
-      //      char RHTresponse[incomingbytes-2];
-      char TDRresponse[incomingbytes];              // remove first three chars (i<CR><LF>) and last two (<CR><LF>) from array
-
-      if (index == RHsensor || index == Tsensor) {
-        for (byte i = 0; i < incomingbytes; i++) {
-          TDRresponse[i] = response[i + 1]; // 4-Mar-2020: skip address, replaced with sensor ID
-          //            Serial.print(TDRresponse[i]);
-          delay(15);
-        }
-        //          Serial.println();
-      } else {
-        /*
-          //        for (byte i = 0; i <= incomingbytes-5; i++){
-          //          TDRresponse[i] = response[i+3];
-          //            Serial.print(TDRresponse[i]);*/
-        for (byte i = 0; i < incomingbytes - 2; i++) {   // was -2
-          TDRresponse[i] = response[i + 1]; // 4-Mar-2020: skip address, replaced with sensor ID
-          //            Serial.print(TDRresponse[i],DEC);
-          delay(20);
-        }
-        //        Serial.println();
-        delay(20);
-      }
-
-      byte j = sizeof(TDRresponse) - 1;
-      for (byte i = 0; i < j; i++) {           // put response from TDR into String
-        if (TDRresponse[i] != 10 && TDRresponse[i] != 13 && TDRresponse[i] > 42  && TDRresponse[i] < 123) { // don't want to save LF or CR or out of range chars
-          if ((TDRresponse[i] == '+') || (TDRresponse[i] == '-')) {  // check for + and -, replace with delimiter
-            SDI12data += sep;
-            delay(20);        // from John's demo: 11 ms ensures that there has been enough time to receive another byte
-            if (TDRresponse[i] == '-') {
-              SDI12data += '-';                  // add '-' back in when needed
-              delay(20);
-            }
-          } else {
-            SDI12data += TDRresponse[i];         // add char to String
-            delay(25);
-          }
-        }
-        else {}
-      }  // end for loop
-  
-  #ifdef getTT
-    if(index != Tsensor && index != RHsensor && index != CS655addr){  // if a TDR, get time info
-      getTimeData(index);
-    }
-  #endif
-
-    } else {  // ERROR 1: if incomingbytes < 5
-      if (index == CS655addr) {
-        SDI12data += "~-999~-999~-999";
-      }
-      else if (index == Tsensor || index == RHsensor) {
-          if (index == Tsensor) {
-            SDI12data += "~-999";
-          } else {
-            SDI12data += "~-999~-999";
-          }
-      }
-      else {    // if a TDR sensor
-        SDI12data += "~-999~-999~-999~-999~-999";
-        #ifdef getTT && keepPEC
-          SDI12data += "~-999";    // 26Jan21: Need extra placeholder or columns shift
-        #endif  
-      }   
-    }
-  }
-  else {   // ERROR 2: if there was no response to M!
-    if (index == CS655addr) {
-      SDI12data += "~-999~-999~-999";
-    }
-    else if (index == Tsensor || index == RHsensor) {
-        if (index == Tsensor) {
-          SDI12data += "~-999";
+      for (byte i = 0; i < (SDI12_BUFFER_SIZE); i++) {
+        char c = SDI12port.read(); delay(8);
+        responseRaw[i] = c;         // store c in array if not at last byte
+        if (c == 13) {
+          //          if (strcmp(allSensors[rowNum].type, "TR31") == 0) { // if a TDR and keepPEC, add tilde to end
+          //            #ifdef keepPEC
+          //              responseRaw[i] = '~';
+          //              i++;
+          //            #endif
+          //          }
+          responseRaw[i] = 0;
+          respLen = i;
+          break;
         } else {
-          SDI12data += "~-999~-999";
+          //          Serial.print(c);
+          if (c == '-') {
+            negNum++;                 // count number of '-'s to calculate size of array needed to use sep delimiter
+          }
         }
-    }   
-    else {    // if a TDR
-      SDI12data += "~-999~-999~-999~-999~-999";
-      #ifdef getTT && keepPEC
-        SDI12data += "~-999";    // 26Jan21: Need extra placeholder or columns shift
-      #endif  
-    }   
-  }
+        delay(10);
+      }    // end for loop
+      //      Serial.println(responseRaw);
 
-  delay(300);
-  //  Serial.print("SDI12data: ");
-  //  Serial.println(SDI12data);
-  SDI12port.clearBuffer();
+      SDI12port.clearBuffer();
+
+      //      Serial.print("respLen: "); Serial.println(respLen);
+
+      // Step 3 -- remove address, CR, and replace "+" and "-" with delimiter, add in "-"
+
+      byte len = respLen + negNum;
+      char response[len];
+      byte j = 1;
+
+      for (byte i = 0; i < len; i++) {
+        if (responseRaw[j] == '+') {
+          response[i] = sep;
+        }
+        else if (responseRaw[j] == '-') {
+          response[i] = sep;
+          i++;
+          response[i] = responseRaw[j];
+        }
+        else {
+          response[i] = responseRaw[j];
+        }
+        j++;
+        delay(5);
+      }
+      response[len - 1] = 0;
+      
+      if(debug){
+        Serial.println();
+        Serial.print("Delimited response: ");
+        Serial.println(response);
+      }
+
+      if (strcmp(allSensors[rowNum].type, "TR31") == 0) { // if a TDR
+
+        bufAdded = getTimeData(rowNum, index, response, len);
+
+      } // end if sensor is a TDR
+      else {
+        //        strcpy(allSensors[rowNum].data, response);
+        if (rowNum != sensorTot - 1) {
+          if (allSensors[rowNum].depth[0] != 0) {
+            sprintf(buf, "%s~%s%s~", allSensors[rowNum].ID, allSensors[rowNum].depth, response);
+          } else {
+            char dpth[] = "-999";
+            sprintf(buf, "%s~%s%s~", allSensors[rowNum].ID, dpth, response);
+          }
+        } else {
+          if (allSensors[rowNum].depth[0] != 0) {
+            sprintf(buf, "%s~%s%s", allSensors[rowNum].ID, allSensors[rowNum].depth, response);
+          } else {
+            char dpth[] = "-999";
+            sprintf(buf, "%s~%s%s", allSensors[rowNum].ID, dpth, response);
+          }
+        }
+      }
+
+    } else {  // ERROR 1: if incomingbytes < 3
+      char error[] = "~-999";
+      byte numOut = allSensors[rowNum].numOut;
+      byte errorLen = numOut * sizeof(error);
+      char errString[errorLen];
+      strcpy(errString, error);
+
+      if (numOut > 1) {
+        for (byte i = 0; i < numOut - 1; i++) {
+          strcat(errString, error);
+        }
+      }
+
+      //      strcpy(allSensors[rowNum].data,errString);
+      if(debug){
+        Serial.print("Error string: ");
+        Serial.println(errString);
+      }
+      
+      if (rowNum != sensorTot - 1) {
+        sprintf(buf, "%s~%s%s~", allSensors[rowNum].ID, allSensors[rowNum].depth, errString);
+      } else {
+        sprintf(buf, "%s~%s%s", allSensors[rowNum].ID, allSensors[rowNum].depth, errString);
+      }
+
+    }
+  } else {  // if SDI12response = false
+    char error[] = "~-999";
+    byte numOut = allSensors[rowNum].numOut;
+    byte errorLen = numOut * sizeof(error);
+    char errString[errorLen];
+    strcpy(errString, error);
+  
+    if (numOut > 1) {
+      for (byte i = 0; i < numOut - 1; i++) {
+        strcat(errString, error);
+      }
+    }
+    
+    if (debug){
+      Serial.print("Error string: ");
+      Serial.println(errString);
+    }
+    
+    if (rowNum != sensorTot - 1) {
+      sprintf(buf, "%s~%s%s~", allSensors[rowNum].ID, allSensors[rowNum].depth, errString);
+    } else {
+      sprintf(buf, "%s~%s%s", allSensors[rowNum].ID, allSensors[rowNum].depth, errString);
+    }
+  }
+  //  Serial.println(buf);
   delay(50);
+
+  if (!bufAdded) {  // if data string not already concatenated
+    allData += buf; delay(50);
+  }
 
   SDI12port.clearBuffer();
   delay(50);
@@ -1428,78 +1455,122 @@ void getResponseSDI12(char index) {
 
 //------------- TDRs: Replace PEC with travel time --------------------------------------
 
-void getTimeData(char index){
+bool getTimeData(byte r, char a, char data[80], byte l) {
+  byte rowNum = r;
+  char index = a;
+  byte len = l + 1;
+  char response[len];
+  char buf[MAX_RESP];
 
-//  Serial.println(SDI12data);
+  //  Serial.println(len);
+  for (byte j = 0; j < len; j++) {
+    response[j] = data[j];
+    if (data[j] == 0) {
+      response[j] = '~';
+    }
+    //    Serial.print(j);
+  }
+  response[len - 1] = 0;
+  //  Serial.println(response);
 
-//--- Remove pEC value from SDI12data
-  #ifndef keepPEC  
-    uint8_t lastTilde = SDI12data.lastIndexOf('~');
-  //  Serial.println(lastTilde);
-  
-    uint8_t toRemove = SDI12data.length() - lastTilde;
-  
-    SDI12data.remove(lastTilde, toRemove);
-  
-  #endif
-  
-//--- get time data from TDR
+  //--- get time data from TDR
 
-  String sendData = "";
-  sendData += index;
-  sendData += "D1!";
+  char sendTT[5];
+  sendTT[0] = index;
+  sendTT[1] = 0;
+  char sndTT[] = "D1!";
+  strcat(sendTT, sndTT);
+  //          Serial.println(sendTT);
 
-  SDI12port.sendCommand(sendData);   
-  delay(500);                  
+  SDI12port.sendCommand(sendTT);
+  delay(500);
 
-  byte incomingbytes = SDI12port.available();
-  char response[incomingbytes - 2];   // replace trailing CR with NULL and remove LF
+  byte incomingTT = SDI12port.available();
+  char respTT[incomingTT - 1];   // replace trailing CR with NULL and remove LF
 
-  if (incomingbytes > 5) {
-    for (byte i = 0; i < (incomingbytes - 1); i++) {
+  if (incomingTT > 5) {
+    for (byte i = 0; i < (incomingTT - 1); i++) {
       char c = SDI12port.read();
-      if(c != 13 && c != 10){
-        response[i] = c;         // store c in array if not at last byte
-//        Serial.print(response[i],DEC);
+      if (c != 13 && c != 10 && c != '+' && c != '-') {
+        respTT[i] = c;         // store c in array if not at last byte
         delay(15);
+      }
+      else if (c == 13) {
+        respTT[i] = 0;
+      }
+      else if (c == '+' || c == '-') {
+        respTT[i] = sep; delay(15);
       }
     }    // end for loop
   }
-
-  String timeData = "";
   
-  for (byte i = 1; i < incomingbytes - 2; i++){
-    if(response[i] != '+' ){
-      timeData += response[i];
-    } else {
-      timeData += sep;  
-    }
-    delay(20);
+  if (debug){
+    Serial.print("Travel time resp: ");
+    Serial.println(respTT);
   }
-//  Serial.println(timeData);
 
-//--- delete all values except for travel time from timeData
-
-  uint8_t last = timeData.lastIndexOf('~');
-
-  uint8_t firstDelete = timeData.length() - last;
-
-  timeData.remove(last, firstDelete);
-
-  uint8_t secondlast = timeData.lastIndexOf('~');
-
-  timeData.remove(0, secondlast);
-
-//  Serial.println(timeData);
-
-// concatenate SDI12data and timeData
-
-  SDI12data += timeData;
-  delay(20);
-//  Serial.println(SDI12data);
+  //--- extract travel time (second to last output)
   
-}
+  char * TTlastTilde = strrchr(respTT, '~');
+  byte lastTpos = TTlastTilde - respTT;       // position of last tilde in respTT
+  byte lenTT = 0;                             // length of char array needed for travel time
+  byte lastdigit;                             // position in respTT array where tt begins
+  for (byte i = 1; i < lastTpos; i++) {
+    if (respTT[lastTpos - i] != '~') {
+      lastdigit = lastTpos - i;
+      lenTT++;
+    } else {
+      break;
+    }
+  }
 
+  char travelT[lenTT + 1];                    // array for holding travel time
+
+  for (byte i = 0; i < lenTT; i++) {
+    travelT[i] = respTT[lastdigit + i];
+  }
+  travelT[lenTT] = 0; delay(100);
+  
+  if (debug){
+    Serial.print("Travel time: ");
+    Serial.println(travelT); delay(20);
+  }
+
+  // concatenate sensor data and time data
+  char resp_TT[len + lenTT]; delay(50);
+
+  strcpy(resp_TT, response); delay(50);
+  resp_TT[0] = '~'; delay(50);
+  strcat(resp_TT, travelT); delay(50);
+  
+  if (debug){
+    Serial.print("resp_TT: ");        
+    Serial.println(resp_TT);
+  }
+  
+  if (rowNum != sensorTot - 1) {
+    if (allSensors[rowNum].depth[0] != 0) {
+      sprintf(buf, "%s~%s%s~", allSensors[rowNum].ID, allSensors[rowNum].depth, resp_TT);
+    } else {
+      char dpth[] = "-999";
+      sprintf(buf, "%s~%s%s~", allSensors[rowNum].ID, dpth, resp_TT);
+    }
+  } else {
+    if (allSensors[rowNum].depth[0] != 0) {
+      sprintf(buf, "%s~%s%s", allSensors[rowNum].ID, allSensors[rowNum].depth, resp_TT);
+    } else {
+      char dpth[] = "-999";
+      sprintf(buf, "%s~%s%s", allSensors[rowNum].ID, dpth, resp_TT);
+    }
+  }
+  //#endif  // end ifdef getTT
+  if (debug) Serial.println(buf);
+  
+  delay(100);
+  allData += buf; delay(50);
+  return true;
+
+}
 //===================================================================================================
 
 //--------------- Calculate Battery Voltage ---------------------------------------------------------
@@ -1508,14 +1579,14 @@ float calcbattV() {
   float result;
   pinMode(pin_mBatt, OUTPUT);
   pinMode(pin_battV, INPUT);
-  
+
   digitalWrite(pin_mBatt, HIGH);
   delayMicroseconds(500);
-  
+
   uint16_t vInt;
   vInt = analogRead(pin_battV);
 
-  digitalWrite(pin_mBatt, LOW);  
+  digitalWrite(pin_mBatt, LOW);
 
   uint16_t battV100 = (uint16_t)(((uint32_t)vInt * 4 * ADC_REF_VOLTAGE * 100 + (3 * ADC_MAXVALUE / 2)) / (3 * ADC_MAXVALUE));
   // NOTE: The order of operations is important in code above to maintain the greatest precision!
@@ -1527,22 +1598,10 @@ float calcbattV() {
   //  100:                              give the result in centi-volts and therefore allow storing a floating point number in 2 bytes instead of using the 4-byte float.
   //  3 * ADC_MAXVALUE / 2:             for rounding to nearest integer value (leave this off to get the truncated value)
 
-//  Serial.println(battV100);
-  result = battV100 / 100 + float((battV100 % 100))/100;
+  //  Serial.println(battV100);
+  result = battV100 / 100 + float((battV100 % 100)) / 100;
   return result;
-/*
-  analogComp_on();
-  digitalWrite(pin_mBatt, HIGH);  // turn on voltage divider
-  delay(50);
 
-  int Aout;
-  Aout = analogRead(pin_battV); // analogRead returns an integer between 0 and 1023
-  result = Aout * multiplier * 1.3333;  // for voltage divider: R1=10k, R2=30k, resist =  (R1+R2)/R2
-
-  digitalWrite(pin_mBatt, LOW);   // turn off voltage divider
-  return result;
-*/
-  
 }
 
 //===================================================================================================
@@ -1553,11 +1612,11 @@ void Timestamp() {      // compile timestamp
 
   battV = calcbattV();
   getBoxT();
-//  unsigned int pvCurrent = getSolarCurrent();
-//  float pvVoltage = getSolarVoltage();
+  //  unsigned int pvCurrent = getSolarCurrent();
+  //  float pvVoltage = getSolarVoltage();
   uint16_t pvCurrent = GetISolar();   // using John's code
   float pvVoltage = GetVSolar();
- 
+
 
   timestamp = "";
   delay(20);
@@ -1589,8 +1648,8 @@ void Timestamp() {      // compile timestamp
   timestamp += ':';
   if (secs < 10) timestamp += '0';
   timestamp += secs;
-  timestamp += '_';
-  timestamp += TMZ;
+  timestamp += "_UTC";
+  //  timestamp += TMZ;
   timestamp += sep;
   //  Serial.println(timestamp);
   delay(50);
@@ -1627,26 +1686,28 @@ void saveData() {
 
   // Call function to write log
   if (ft.writeLog(tmpChars, Len)) {
-    // The remaining code is just for output to the screen and is not necessary for writing the log:
-    uint16_t logSize = ft.getLogSize(ft.lastLogAddress());
-    uint16_t logMemorySize = ft.getLogMemorySize(ft.lastLogAddress());
-
-    Serial.print("\n\nWrote logId: ");
-    Serial.println(ft.logId() - 1);       // Subtracting one here because we are reporting after the write and the log ID has already been incremented
-    Serial.print("data: ");
-    Serial.println(allData);
-    Serial.print("data size: ");
-    Serial.print(Len);
-    Serial.print("; log size: ");
-    Serial.print(logSize);
-    Serial.print("; size in flash: ");
-    Serial.println(logMemorySize);
-    //    Serial.print("Location: 0x");
-    //    Serial.println(writeLoc, HEX);
+    if (debug){
+      // The remaining code is just for output to the screen and is not necessary for writing the log:
+      uint16_t logSize = ft.getLogSize(ft.lastLogAddress());
+      uint16_t logMemorySize = ft.getLogMemorySize(ft.lastLogAddress());
+  
+      Serial.print("\n\nWrote logId: ");
+      Serial.println(ft.logId() - 1);       // Subtracting one here because we are reporting after the write and the log ID has already been incremented
+      Serial.print("data: ");
+      Serial.println(allData);
+      Serial.print("data size: ");
+      Serial.print(Len);
+      Serial.print("; log size: ");
+      Serial.print(logSize);
+      Serial.print("; size in flash: ");
+      Serial.println(logMemorySize);
+      //    Serial.print("Location: 0x");
+      //    Serial.println(writeLoc, HEX);
+    }
   } else {
     Serial.println("Failed to write log!");
   }
-  
+
   ft.flash_sleep();
 
 }
@@ -1659,9 +1720,9 @@ void saveData() {
 float GetVSolar() {
   pinMode(pin_solarVoltage, INPUT);
   float result;
-  uint16_t rawSolarV = analogRead(pin_solarVoltage);  
+  uint16_t rawSolarV = analogRead(pin_solarVoltage);
   uint16_t calc = (uint16_t)(((uint32_t)rawSolarV * 2 * ADC_REF_VOLTAGE * 100 + (ADC_MAXVALUE / 2)) / ADC_MAXVALUE);
-  result = float(calc/100) + float((calc % 100))/100;
+  result = float(calc / 100) + float((calc % 100)) / 100;
   return result;
   // NOTE: The order of operations is important in code above to maintain the greatest precision!
   // NOTE: As needed, terms have been typecasted to uint32_t to avoid overflow for 2 byte integer.
@@ -1688,19 +1749,19 @@ uint16_t GetISolar() {
     // WARNING: EEPROM factory constants must always be written from this point forward!
     if (verHW != 'E')
       iSolarRes100 = 1000;    // this is a default of 10.00 ohms!
-    else 
-      iSolarRes100 = 100;     // default of 1.00 ohms for old board rev. E  
+    else
+      iSolarRes100 = 100;     // default of 1.00 ohms for old board rev. E
   }
-   
+
   digitalWrite(pin_solarShort, HIGH);     // This "shorts" solar cell through shorting resisitor (depending on hardware could be a single 1 ohm resistor or an array of resistors that yields 10 ohms)
   delayMicroseconds(500);                 // Wait 1/2 millisecond before sampling to ensure steady state
-//  uint16_t vSolar100 = GetVSolar();       // Read voltage of shorted solar cell    
+  //  uint16_t vSolar100 = GetVSolar();       // Read voltage of shorted solar cell
   float vSolar = GetVSolar();
   digitalWrite(pin_solarShort, LOW);      // Clear short
 
-  uint16_t dec = (uint16_t)(vSolar*100) % 100;
-  uint16_t vSolar100 = 100*((uint16_t)vSolar) + dec;
-  
+  uint16_t dec = (uint16_t)(vSolar * 100) % 100;
+  uint16_t vSolar100 = 100 * ((uint16_t)vSolar) + dec;
+
   return (uint16_t)(((uint32_t)vSolar100 * 1000) / iSolarRes100);
   // Explanation:
   // V = I * R  -->  I = V / R
@@ -1724,18 +1785,18 @@ uint16_t GetISolar() {
    if (adjusted < 0)
      adjusted = 0;
    return adjusted;
- }
+  }
 */
 /*
-//Returns voltage of solar cell in volts (battery load may affect voltage)
-float getSolarVoltage() {
+  //Returns voltage of solar cell in volts (battery load may affect voltage)
+  float getSolarVoltage() {
   uint16_t rawSolarV;
   rawSolarV = analogRead(pin_solarVoltage);
   return (float)((ADC_REF_VOLTAGE * (float)rawSolarV / (float)ADC_RESOLUTION) * 2.0);   //multiplied by two because there is a voltage divider to keep the Arduino pin from getting 6+ volts from solar cell
-}
+  }
 
-//Returns short circuit current of PV cell in milliamperes (in effect gives the total available charging current of solar cell)
-unsigned int getSolarCurrent() {
+  //Returns short circuit current of PV cell in milliamperes (in effect gives the total available charging current of solar cell)
+  unsigned int getSolarCurrent() {
   //Add the following lines to header and setup function:
   //  #define pin_solarShort      A4
   //  #define SOLAR_CALIB      1.0          //This will become a EEPROM constant that is set during factory config – for now just use 1.0
@@ -1748,7 +1809,7 @@ unsigned int getSolarCurrent() {
   digitalWrite(pin_solarShort, LOW);    //clear short
   return (uint16_t)((solarV / (SOLAR_CALIB)) * 1000);
   //return (uint16_t)((solarV / (SOLAR_CALIB + getMOSFETresistance((float)RTC.temperature()/4.0, solarV))) * 1000);         //solar current is voltage / resistance (which is 1 Ohm in this case); multiply by 1000 to convert to milliamperes
-}
+  }
 */
 //======================================================================================
 
@@ -1952,12 +2013,15 @@ void numToMonthStrCat(uint8_t monthValIn, char* dateStrOut) {
 
 void menu()
 {
-  userinput = false;    // added 01/13/2020
+  bool userIn = false;
+  byte toDo;
+  
   if (Serial.available() > 0)
   {
     Serial.read();       // clear serial input buffer
   }
 
+  depthToStruct();
   EEPROM.get(EEPROM_PROJECTID, projectID);
 
   if (!radioSwitch) {
@@ -1965,7 +2029,7 @@ void menu()
   } else {
     radioID = EEPROM.read(EEPROM_ACTIVE_RADIO);
   }
-  
+
   GatewayID = EEPROM.read(EEPROM_GATEWAYID);
   interval = EEPROM.read(EEPROM_ALRM1_INT);
   gatewayPresent = EEPROM.read(EEPROM_GW_PRESENT);
@@ -1979,7 +2043,7 @@ void menu()
   Serial.println(VERSION);
   Serial.println();
   Serial.print(F("Serial Number: "));
-  Serial.println(serNum);
+  Serial.println(facInfo.sernum);
   Serial.print(F("LoRa Radio Freq (MHz): "));
   Serial.println(LoRaFREQ);
   Serial.print(F("Project ID: "));
@@ -1998,7 +2062,7 @@ void menu()
   delay(50);
   readClock();
 
-  Serial.print(F("Current date & time:  "));
+  Serial.print(F("Current date & time: "));
   Serial.print(mnths);                               // date
   Serial.print('-');
   Serial.print(days);
@@ -2018,8 +2082,8 @@ void menu()
     Serial.print('0');
   }
   Serial.print(secs);
-  Serial.print(' ');
-  Serial.println(TMZ);
+  Serial.println(" UTC");
+  //  Serial.println(TMZ);
   Serial.print(F("Current battery voltage:  "));
   Serial.print(battV);
   Serial.println(" V");
@@ -2039,11 +2103,12 @@ void menu()
   Serial.println(F("   r  <--  Change Node radio ID"));
   Serial.println(F("   m  <--  Set measurement interval"));         // choose how often to take measurements from sensors
   Serial.println(F("   n  <--  Scan for devices on SDI-12 bus"));   // added 01/13/2020
-  Serial.println(F("   a  <--  Change SDI-12 sensor address"));
+  Serial.println(F("   a  <--  Change SDI-12 sensor addresses"));
   Serial.println(F("   t  <--  Test sensors"));                     // takes three measurements from sensors
-//  Serial.println(F("   S  <--  Synchronize Gateway & Node clocks"));  // get time from Gateway, update clock
+  //  Serial.println(F("   S  <--  Synchronize Gateway & Node clocks"));  // get time from Gateway, update clock
   Serial.println(F("   p  <--  Print data to screen"));         // print data to Serial Monitor
   Serial.println(F("   e  <--  Erase all data"));                   // delete all data from Flash
+  Serial.println(F("   b  <--  Turn debug statements on/off"));    
   Serial.println(F("   x  <--  Exit menu"));                        // exit
   Serial.print(F("Enter choice: "));
   byte   menuinput;                                    // user input to menu prompt
@@ -2055,7 +2120,7 @@ void menu()
     menuinput = 120;
     if (Serial.available() > 0)                                    // if something typed, go to menu
     {
-      userinput = true;                        // added 01/13/2020
+      //      userinput = true;                        // added 01/13/2020
       menuinput = Serial.read();               // get user input
       Serial.println(char(menuinput));
       while (Serial.available() > 0)
@@ -2070,10 +2135,13 @@ void menu()
   {
     case 48:                    // ------ 0 - Enter config string ---------------------------------------------
       Serial.println();
+      Serial.println(F("REMINDER: Use '+' or '-' to indicate above or below soil surface for depths!"));
       Serial.print(F("Enter configuration string: "));
-      charinput();
       Serial.println();
-      decodeConfig(charInput);
+      charinput();
+      if (charInput[0]) {
+        decodeConfig(charInput);
+      }
       Serial.println();
       delay(500);
 
@@ -2082,40 +2150,46 @@ void menu()
 
     case 100: case 68:           // ------ d - Enter sensor depths ---------------------------------------------
       clearDepths();    // 28May2020
-      
+
       Serial.println();
       if (skipScan) {
         SDI12Scan();
       }
-      
+
       Serial.println(F("Enter sensor depth in cm. Use '+' or '-' to indicate above or below soil surface:"));
 
-      for (byte i = 0; i < sensorNum; i++) {
-        depths[i][0] = sensorList[i][0];
-        
-        Serial.print(sensorList[i]);
+      for (byte i = 0; i < sensorTot; i++) {
+        depths[i][0] = allSensors[i].addr;
+
+        Serial.print(allSensors[i].addr);
         Serial.print(": ");
         charinput();
 
-        while (charInput[0] != '-' && charInput[0] != '+') {
-          Serial.println("ERROR: Use '+' or '-' to indicate above or below soil surface");
-          Serial.print(sensorList[i]);
-          Serial.print(": ");
-          charinput();
-        }
+        if (charInput[0]) {
+          while (charInput[0] != '-' && charInput[0] != '+') {
+            Serial.println("ERROR: Use '+' or '-' to indicate above or below soil surface");
+            Serial.print(allSensors[i].addr);
+            Serial.print(": ");
+            charinput();
+          }
+          userIn = true;
+          strcpy(allSensors[i].depth, charInput);
 
-        for (byte j = 0; j < 8; j++) {
-          if (charInput[j]) {
-            depths[i][j + 1] = charInput[j]; delay(8);
-          } else {
-            depths[i][j + 1] = 0;
-            break;
+          for (byte j = 0; j < 7; j++) {  // populate depths array (for saving to EEPROM)
+            if (charInput[j]) {
+              depths[i][j + 1] = charInput[j]; delay(8);
+            } else {
+              depths[i][j + 1] = 0;
+              break;
+            }
           }
         }
       }
-   
+
       Serial.println();
-      EEPROM.put(EEPROM_DEPTHS, depths);
+      if (userIn) {
+        EEPROM.put(EEPROM_DEPTHS, depths);
+      } else {};
       delay(500);
 
       menu();
@@ -2169,26 +2243,26 @@ void menu()
 
       sensorAddress();
       Serial.println();
-      delay(500);
+      //      delay(500);
       menu();
       break;
 
     case 116: case 84:          // ------ t - Test sensors ---------------------------------------------
 
       Serial.println(F("Test measurements:"));     // take 3 readings to check sensors
-//      Serial.println();
+      //      Serial.println();
       delay(10);
-      if(skipScan){
+      if (skipScan) {
         SDI12Scan();
       }
- 
+
       for (byte g = 1; g < 4; g++) {
         readClock();
         Timestamp();         // compile timestamp
         delay(50);
         readSensors();           // read all sensors
         compileData();
-//        Serial.println(allData);
+        //        Serial.println(allData);
         delay(200);
       }
       delay(500);
@@ -2198,30 +2272,79 @@ void menu()
 
     case 112: case 80:          // ------ p - Print node data to screen ---------------------------------------------
 
-      Serial.println(F("Print all data to screen: "));     // download all data in Flash
+      Serial.println(F("Print data to screen: "));     // download all data in Flash
       delay(100);
+      Serial.println(F("  a --> Print all the data"));
+      Serial.println(F("  t --> Print latest logs"));
+      Serial.print(F("Enter choice: "));
+      charinput();
 
-      ft.printData();
+      if (charInput[0] == 'a' || charInput[0] == 'A') {
+        ft.printData();
+      } else if (charInput[0] == 't' || charInput[0] == 'T') {
+        uint32_t lastLog = ft.logId() - 1;
+        //        Serial.println(lastLog);
+        uint32_t toLog;
+        if (lastLog > 10) {
+          toLog = lastLog - 10;
+        } else {
+          toLog = 0;
+        }
+        for (uint32_t j = lastLog; j > toLog; j--) {
+          ft.printLog(ft.logAddrFromId(j));
+        }
+      } else {
+        Serial.println();
+        Serial.print(F("Invalid input. Returning to menu.")); delay(1000);
+      }
       Serial.println();
-      
+
       menu();
       break;
 
     case 101: case 69:          // ------ e - Erase Flash ---------------------------------------------
 
-      Serial.println(F("Are you sure you want to erase all data stored in memory?"));
-      Serial.print(F("Enter 'y' for yes or 'n' for no: "));
-      charinput();
-
-      if (charInput[0] == 'y' || charInput[0] == 'Y') {
+      Serial.print(F("Are you sure you want to erase all data stored in memory? (y/n): "));
+      toDo = yesNo();
+    
+      if (toDo == 1) {
+        Serial.print("Erasing data...");
         ft.eraseLogs();
+        Serial.println(" done.");
+        ft.logSetup(logsBeginAddr, logsEndAddr, LOG_minSize, LOG_maxSize, true);
       }
 
-      ft.logSetup(logsBeginAddr, logsEndAddr, LOG_minSize, LOG_maxSize, true);
       Serial.println();
       menu();
       break;
 
+    case 'b': case 'B':          // ------ b - Turn debug on/off ----------------------------------------------
+      if(debug){
+        Serial.println(F("Turn debug statements off? (y/n): "));
+        toDo = yesNo();
+        if (toDo == 1){
+          debug = false;
+          EEPROM.update(EEPROM_DEBUG,debug);
+          Serial.println(F("Debug statements off"));
+        } else if (toDo == 2){
+          Serial.println(F("Debug statements on"));
+        }
+      } else {
+        Serial.println(F("Turn debug statements on? (y/n): "));
+        toDo = yesNo();
+        if (toDo == 1){
+          debug = true;
+          Serial.println(F("Debug statements on"));
+        } else if (toDo == 2){
+          Serial.println(F("Debug statements off"));
+        }         
+      }
+      EEPROM.update(EEPROM_DEBUG,debug);
+      Serial.println();
+      delay(500);
+      menu();
+      break;
+ 
     case 120: case 88:          // ------ x ----------------------------------------------
       Serial.println(F("Exit"));                           // exit
       Serial.println();
@@ -2229,33 +2352,35 @@ void menu()
       break;
 
     case 'i': case 'I':         // ------ i - Enter project ID ---------------------------------------------
-    Serial.println();
-    Serial.print(F("  Enter a Project ID (up to 5 characters, ex: PSA): "));    // set project ID
-    charinput();
-    
-    byte i = 0;
-    for (i = 0; i < 5; i++) {
-      if(charInput[i] != 0){
-        projectID[i] = charInput[i];
-      } else {
-        break;
-      }        
-    }
-    projectID[i] = 0;
-    
-    EEPROM.put(EEPROM_PROJECTID, projectID);
-    delay(10);
+      Serial.println();
+      Serial.print(F("  Enter a Project ID (up to 5 characters, ex: PSA): "));    // set project ID
+      charinput();
 
-    Serial.println();
-    delay(500);
+      if (charInput[0]) {
+        byte i = 0;
+        for (i = 0; i < 5; i++) {
+          if (charInput[i] != 0) {
+            projectID[i] = charInput[i];
+          } else {
+            break;
+          }
+        }
+        projectID[i] = 0;
 
-    menu();
-    break;
+        EEPROM.put(EEPROM_PROJECTID, projectID);
+        delay(10);
+      }
+
+      Serial.println();
+      delay(500);
+
+      menu();
+      break;
   }
-  
-  if (userinput == true) {
-    digitalWrite(LED, LOW);
-  }
+
+  //  if (userinput == true) {
+  //    digitalWrite(LED, LOW);
+  //  }
 }
 
 //======================================================================================
@@ -2265,8 +2390,11 @@ void menu()
 //-------------- Decode config string --------------------------------
 
 void decodeConfig(char config_string[200]) {
+  /* Config string format: projectID,sernum,radio ID,gateway ID,measInt,sensorTot,addr1,depth1,...
+    ** gateway ID == '0' --> no gateway
+  */
   clearDepths();  // 28May2020
-  
+
   char buf[200];
 
   for (byte i = 0; i < 200; i++) {
@@ -2317,18 +2445,18 @@ void decodeConfig(char config_string[200]) {
     projectID[i] = 0;
     Serial.print(F("projectID: "));
     Serial.println(projectID);
-  
+
     //--- Match serial num
-  
+
     uint8_t SerNum[8];
-  
+
     for (byte i = 0; i < 8; i++) {
       SerNum[i] = configN[i + commaPos[0] + 1] - 48;
       //        Serial.print(SerNum[i]);
     }
-  
+
     uint32_t serNumCheck = 0;
-  
+
     for (byte i = 0; i < 8; i++) {
       long baseTen = 1;
       for (byte j = 0; j < (7 - i); j++) {
@@ -2336,64 +2464,71 @@ void decodeConfig(char config_string[200]) {
       }
       serNumCheck += (SerNum[i] * baseTen);
     }
-  
+
     Serial.println(serNumCheck);
-  
+
     if (serNumCheck != serNum) {
       Serial.println("ERROR: Serial numbers do not match!");
       configOK = false;
     }
-  
+
     //--- get radio ID
-  
+
     if ((commaPos[firstComma + 1] - commaPos[firstComma + 0]) == 2) {  // radio ID is one digit
       radioID = configN[commaPos[firstComma + 0] + 1] - 48;
     } else {
       radioID = 10 * (configN[commaPos[firstComma + 0] + 1] - 48) + (configN[commaPos[firstComma + 1] - 1] - 48);
     }
-  
+
     Serial.print("radio ID: ");
     Serial.println(radioID);
-  
+
     //--- get Gateway ID
-  
+
     if ((commaPos[firstComma + 2] - commaPos[firstComma + 1]) == 2) {  // radio ID is one digit
       GatewayID = configN[commaPos[firstComma + 1] + 1] - 48;
     } else {
       GatewayID = 10 * (configN[commaPos[firstComma + 1] + 1] - 48) + (configN[commaPos[firstComma + 2] - 1] - 48);
     }
-  
-    gatewayPresent = true;
+
     Serial.print("Gateway ID: ");
-    Serial.println(GatewayID);
-  
+    
+    if (GatewayID != 0) {       // allow user to enter '0' if not using gateway
+      gatewayPresent = true;
+      Serial.println(GatewayID);
+    } else {
+      gatewayPresent = false;
+      Serial.println("N/A");
+    }
+
+
     //--- Get measurement interval
-  
+
     interval = 10 * (configN[commaPos[firstComma + 2] + 1] - 48) + (configN[commaPos[firstComma + 2] + 2] - 48);
-  
+
     Serial.print("Measurement interval: ");
     Serial.println(interval);
-  
-    if (interval != 10 && interval != 15 && interval != 20 && interval != 30 && interval != 60) {
+
+    if (interval != 2 && interval != 10 && interval != 15 && interval != 20 && interval != 30 && interval != 60) {
       Serial.println(F("ERROR: Invalid interval (every 10, 15, 20, 30, or 60 mins)"));
       configOK = false;
     }
-  
+
     //--- Get number of sensors
-  
+
     byte sensorNum;
-  
+
     if ((commaPos[firstComma + 4] - commaPos[firstComma + 3]) == 2) {
       sensorNum = configN[commaPos[firstComma + 3] + 1] - 48;
     } else {
       sensorNum = 10 * (configN[commaPos[firstComma + 3] + 1] - 48) + (configN[commaPos[firstComma + 4] - 1] - 48);
     }
-  
+
     Serial.print("Number of sensors: ");
     Serial.println(sensorNum);
-  
+
     //--- Get sensor addresses and depths
-  
+
     for (byte r = 0; r < sensorNum; r++) {
       byte L = 4 + 2 * r; // comma before address
       byte R = 4 + 2 * r + 1; // comma after address
@@ -2401,7 +2536,7 @@ void decodeConfig(char config_string[200]) {
       //     Serial.print(commaPos[firstComma + R]);
       //     Serial.print(commaPos[firstComma + L]);
       //     Serial.print(x);
-     
+
       if (r == (sensorNum - 1) && R != (commaTot - 3)) {    // 9/24/2020: check for correct number of sensors first
         //      Serial.println(R);
         //      Serial.println(commaTot);
@@ -2410,14 +2545,41 @@ void decodeConfig(char config_string[200]) {
       } else {
         depths[r][0] = configN[commaPos[firstComma + L] + 1];
         Serial.print(depths[r][0]);
-    
+        allSensors[r].addr = depths[r][0];
+
+        bool missingSign = false;
+        char dpth[6];
+        byte dLen = 0;
         for (byte c = 1; c < x; c++) {
-          depths[r][c] = configN[commaPos[firstComma + R] + c];
+          char digit = configN[commaPos[firstComma + R] + c];
+          if (c == 1 && digit != '-' && digit != '+') {
+            missingSign = true;
+            configOK = false;
+          } else {
+            if ((digit > 47 && digit < 58) || digit == '-' || digit == '+' || digit == '.') {
+              depths[r][c] = digit;
+              dpth[c - 1] = digit;
+              dLen++;
+            }
+          }
           Serial.print(depths[r][c]);
         }
-        depths[r][x] = 0;
         Serial.println();
-        delay(5); 
+//        Serial.print("dLen: ");
+//        Serial.println(dLen);
+        depths[r][x] = 0;
+        dpth[x - 1] = 0;
+        strcpy(allSensors[r].depth, dpth);
+        //                Serial.println(allSensors[r].addr);
+        //        Serial.println();
+        //        Serial.println(allSensors[r].depth);
+        for (byte j = 0; j < 6; j++) {
+          //          Serial.print(allSensors[r].depth[j],DEC);
+        }
+
+        Serial.println();
+        if (missingSign) Serial.println(F("ERROR: Missing +/- before depth!"));
+        delay(5);
       }
     }
   }
@@ -2440,26 +2602,26 @@ void decodeConfig(char config_string[200]) {
     EEPROM.update(EEPROM_ALRM1_INT, interval);
     EEPROM.put(EEPROM_DEPTHS, depths);
   }
-    delay(400);   // Added 9/24/2020
+  delay(400);   // Added 9/24/2020
 }
 
 void setRTCTime() {
 
   Serial.println(F("Enter the date and time in Coordinated Universal Time (UTC): "));
 
-  Serial.print(F("  input month:  "));
+  Serial.print(F("  input month: "));
   getinput();
   mnths = indata;
   tm.Month = mnths;
-  Serial.print(F("  input day:    "));
+  Serial.print(F("  input day: "));
   getinput();
   days = indata;
   tm.Day = days;
-  Serial.print(F("  input year:   "));
+  Serial.print(F("  input year: "));
   getinput();
   yrs = indata;
   tm.Year = yrs - 1970;
-  Serial.print(F("  input hour:   "));
+  Serial.print(F("  input hour: "));
   getinput();
   hrs = indata;
   tm.Hour = hrs;
@@ -2468,47 +2630,53 @@ void setRTCTime() {
   mins = indata;
   tm.Minute = mins;
 
-  RTC.write(tm);
+  if (indata) {
+    RTC.write(tm);
+  }
   delay(50);
 }
 
 void setIDs() {
+  Serial.println();
+  Serial.print(F("Are you using a Gateway? (y/n): "));
 
-  Serial.print(F("Are you using a Gateway? Enter 'y' for yes, 'n' for no: "));
-  charinput();
-  gatewayPresent = (charInput[0] == 'y' || charInput[0] == 'Y' ? 1 : 0);
-  EEPROM.update(EEPROM_GW_PRESENT, gatewayPresent);
-
-  if (gatewayPresent == 1) {
-    Serial.print(F("    Enter Gateway radio ID: "));
-    getinput();
-    GatewayID = indata;
-    EEPROM.update(EEPROM_GATEWAYID, GatewayID);
-    delay(10);
+  byte toDo = yesNo();
+  if (toDo == 1){ 
+    gatewayPresent = true;
+    EEPROM.update(EEPROM_GW_PRESENT, gatewayPresent);
+    if (gatewayPresent == 1) {
+      Serial.print(F("    Enter Gateway radio ID: "));
+      getinput();
+      GatewayID = indata;
+      EEPROM.update(EEPROM_GATEWAYID, GatewayID);
+      delay(10);
+    }
   }
-
-  delay(100);
+  else if (toDo == 2){
+    gatewayPresent = false;
+    Serial.println(F("Data logging only mode"));
+  }
+  delay(500);
 }
 
 void changeDefault() {
-  Serial.println(F("Would you like to change the radio ID from the default value?"));
-  Serial.print(F(" Enter 'y' for yes, 'n' for no: "));
-  charinput();
-  radioSwitch = (charInput[0] == 'y' || charInput[0] == 'Y' ? 1 : 0);
-  EEPROM.update(EEPROM_FLAG_RADIO, radioSwitch);
-  if (radioSwitch) {
-    //    Serial.println();
-    Serial.print(F(" Enter new radio ID: "));
-    getinput();
-    radioID = indata;
-    EEPROM.update(EEPROM_ACTIVE_RADIO, radioID);
-    Serial.println(F("Radio ID updated"));
-  } else {
-    radioID = default_radioID;
-    Serial.println(F("Default radio ID accepted"));
-  }
-  LoRa.setThisAddress(radioID);
   Serial.println();
+  Serial.print(F("Would you like to change the radio ID from the default value? (y/n): "));
+  byte toDo = yesNo();
+  if (toDo == 1){
+    radioSwitch = true;
+    EEPROM.update(EEPROM_FLAG_RADIO, radioSwitch);
+      Serial.print(F(" Enter new radio ID: "));
+      getinput();
+      radioID = indata;
+      EEPROM.update(EEPROM_ACTIVE_RADIO, radioID);
+      Serial.println(F("Radio ID updated"));
+    } else {
+      radioID = default_radioID;
+      Serial.println(F("Default radio ID accepted"));
+    }
+    LoRa.setThisAddress(radioID);
+    Serial.println();
 }
 
 void measureInt() {
@@ -2516,38 +2684,40 @@ void measureInt() {
   Serial.print(F("Enter measurement interval (every 10, 15, 20, 30, or 60 mins): "));
   Serial.flush();
   getinput();
-  while (indata != 2 && indata != 5 && indata != 10 && indata != 15 && indata != 20 && indata != 30 && indata != 60) {
-    Serial.print(F("Invalid interval. Enter measurement interval (every 10, 15, 20, 30, or 60 mins): "));
-    Serial.flush();
-    getinput();
+  if (indata) {
+    while (indata != 2 && indata != 5 && indata != 10 && indata != 15 && indata != 20 && indata != 30 && indata != 60) {
+      Serial.print(F("Invalid interval. Enter measurement interval (every 10, 15, 20, 30, or 60 mins): "));
+      Serial.flush();
+      getinput();
+    }
+
+    while (RHPresent && indata < 15) {
+      Serial.println(F("ERROR: minimum 15 minute interval required with RH sensor."));
+      Serial.print(F("Enter new measurement interval(every 10, 15, 20, 30, or 60 mins): "));
+      getinput();
+    }
+
+    interval = indata;
+    EEPROM.update(EEPROM_ALRM1_INT, interval);
   }
-  
-  while (RHPresent && indata < 15){
-    Serial.println(F("ERROR: minimum 15 minute interval required with RH sensor."));
-    Serial.print(F("Enter new measurement interval(every 10, 15, 20, 30, or 60 mins): "));
-    getinput();
-  }
-  
-  interval = indata;
-  EEPROM.update(EEPROM_ALRM1_INT, interval);
 }
 
-void printDepths(){ // added 28May2020
-//  EEPROM.get(EEPROM_DEPTHS, depths); delay(100); 
+void printDepths() { // added 28May2020
+  //  EEPROM.get(EEPROM_DEPTHS, depths); delay(100);
   Serial.println("Printing depths...");
-     for(byte r = 0; r < sensorNum; r++){
-      for(byte c = 0; c < 10; c++){
-        Serial.print(depths[r][c]);
-        delay(5);
-      }
-      Serial.println();
-     }
+  for (byte r = 0; r < sensorNum; r++) {
+    for (byte c = 0; c < 10; c++) {
+      Serial.print(depths[r][c]);
+      delay(5);
+    }
     Serial.println();
+  }
+  Serial.println();
 }
 
-void clearDepths(){   // added 28May2020
+void clearDepths() {  // added 28May2020
   EEPROM.get(EEPROM_DEPTHS, depths); delay(100);
-  memset(depths,0,sizeof(depths));
+  memset(depths, 0, sizeof(depths));
 
 }
 
@@ -2578,10 +2748,11 @@ void getinput()
         input = incoming[i] - 48;                // convert ASCII value to decimal
         indata = indata * 10 + input;            // assemble to get total value
       }
+      Serial.println(indata);
       break;                                       // exit before timeout
     }
   }
-  Serial.println(indata); delay(10);
+  delay(10);
 
 }
 
@@ -2590,6 +2761,7 @@ void getinput()
 //-------------- Get User Input for character variables --------------------------------
 
 void charinput() {
+  memset(charInput, 0, sizeof(charInput)); delay(50);
   long  timeout;                                      // length of time to wait for user
   timeout = millis() + 10000;         // time to wait for user to input something
 
@@ -2602,7 +2774,7 @@ void charinput() {
     {
       delay(100);                                  // give time for everything to come in
       numincoming = Serial.available();            // number of incoming bytes
-//             Serial.println(numincoming);
+      //             Serial.println(numincoming);
       for (byte i = 0; i <= numincoming; i++)           // read in everything
       {
         incomingChar[i] = Serial.read();
@@ -2621,144 +2793,137 @@ void charinput() {
   Serial.println(charInput);
 }
 
-//======================================================================================
-
-//-------------- Sync G & N Time [NOT USED] --------------------------------
-/*
-void syncTime() {
-
-  if (!LoRa.init(LoRaFREQ, timeoutACK, TxPower, retryNum, radioID)) {      // 01/14/2020                // initialize radio
-    Serial.println("Radio failed");
-  }
-
-  uint8_t buf[19];
-  uint8_t len = sizeof(buf);
-  uint8_t from;
-  boolean timeSynced = false;
-  uint8_t hello[] = {1, 1, 1, 1};
-
-  readClock();
-  long timeout = millis();// + 45000; 01/14/2020    // 45 seconds
-
-  while (((millis() - timeout) < 45000)  && (timeSynced == false)) {    // 01/14/2020
-
-    LoRa.sendtoWait(hello, 4, GatewayID);
-
-    /* if(LoRa.recvfromAckTimeout(buf, &len, timeoutPacket, &from)){  // if time update received
-      if (len > 0) {
-
-       int nYear;
-       int nMonth;
-       int nDay;
-       int nHour;
-       int nMin;
-       int nSec;
-       char *nbuf = (char*)buf;
-
-       if(sscanf(nbuf, "%d/%d/%d|%d:%d:%d", &nYear, &nMonth, &nDay, &nHour, &nMin, &nSec)){    // evaluate buffer and set clock to new time
-
-       tm.Year = nYear - 1970;
-       tm.Month = nMonth;
-       tm.Day = nDay;
-       tm.Hour = nHour;
-       tm.Minute = nMin;
-       tm.Second = nSec;
-
-       RTC.write(tm);      // update clock
-       timeSynced = true;
-
-      }
-      }  // end if(len>0)
-      }  // end if transmission received 
-  }
-  
-    if (timeSynced == false){
-      Serial.println("Synchronization failed. Return to menu to try again.");
-    } else {
-      Serial.println();
-      Serial.println("Gateway & Node successfully synced");
-    }
-}
-*/
 
 //======================================================================================
 
 //-------------- Change sensor address -------------------------------------------------
 
 void sensorAddress() {
-  oldAddress = '!';
-  //    digitalWrite(SDI12Pwr,HIGH);                    // turn on SDI12 sensors
+  
   SDI12port.begin();
   delay(500);
   boolean found = false;
-  if(skipScan){
+  if (skipScan) {
     SDI12Scan();
   }
 
-  for (char j1 = '0'; j1 <= '9'; j1++) if (isActiveSDI12(j1)) {
-      found = true;
-      oldAddress = j1;
-      changeAddress();
-      Serial.println();
-    }
+  SDI12port.begin();
+  delay(500);
 
-  for (char j1 = 'a'; j1 <= 'z'; j1++) if (isActiveSDI12(j1)) {
-      found = true;
-      oldAddress = j1;
-      changeAddress();
-      Serial.println();
-    }
+  for (byte j = 0; j < sensorTot; j++) {
+    char oldAddr = allSensors[j].addr;
+    Serial.print(F("Current address: "));
+    Serial.println(oldAddr);
 
-  for (char j1 = 'A'; j1 <= 'Z'; j1++) if (isActiveSDI12(j1)) {
-      found = true;
-      oldAddress = j1;
-      changeAddress();
-      Serial.println();
-    }
+    Serial.print("Enter new address: ");                             // prompt for a new address
+    while (!Serial.available());
+    char newAdd = Serial.read();
 
-  if (!found) {
-    Serial.println("No sensor detected. Check physical connections."); // couldn't find a sensor. check connections..
+    // wait for valid response
+    while ( ((newAdd < '0') || (newAdd > '9')) && ((newAdd < 'a') || (newAdd > 'z')) && ((newAdd < 'A') || (newAdd > 'Z'))) {
+      if (!(newAdd == '\n') || (newAdd == '\r') || (newAdd == ' ')) {
+        Serial.println("Not a valid address. Please enter '0'-'9', 'a'-'A', or 'z'-'Z'.");
+      }
+      while (!Serial.available());
+      newAdd = Serial.read();
+    }
+    Serial.println(newAdd);
+    if (!changeAddress(oldAddr, newAdd)) Serial.println(F("Address change failed")); else Serial.println(F("Success"));
+    SDI12port.clearBuffer(); delay(30);
   }
+
+  SDI12port.end();
+  delay(500);
 
 }
 
-void changeAddress() {
-  //  char oldAddress = '!';
+bool changeAddress(char oldA, char newA) {
+  char oldAddress = oldA;
+  char newAddress = newA;
   String myCommand = "";
-
-  Serial.print(F("Current address: "));
-
-  Serial.println(oldAddress);
-
-  Serial.print("Enter new address: ");                             // prompt for a new address
-  while (!Serial.available());
-  char newAdd = Serial.read();
-
-  // wait for valid response
-  while ( ((newAdd < '0') || (newAdd > '9')) && ((newAdd < 'a') || (newAdd > 'z')) && ((newAdd < 'A') || (newAdd > 'Z'))) {
-    if (!(newAdd == '\n') || (newAdd == '\r') || (newAdd == ' ')) {
-      Serial.println("Not a valid address. Please enter '0'-'9', 'a'-'A', or 'z'-'Z'.");
-    }
-    while (!Serial.available());
-    newAdd = Serial.read();
-  }
-  Serial.println(newAdd);
-
-  Serial.println("Readdressing sensor.");
+  bool success = false;
+//  SDI12port.clearBuffer();
+  
+  Serial.print("Readdressing sensor...");
   myCommand = "";
-  myCommand += (char) oldAddress;
+  myCommand += oldAddress;
   myCommand += "A";
-  myCommand += (char) newAdd;
+  myCommand += newAddress;
   myCommand += "!";
-  SDI12port.sendCommand(myCommand);
+//  Serial.println(myCommand);
+  
+  SDI12port.sendCommand(myCommand); delay(400);
+  
+  byte numIn = SDI12port.available(); 
+//  Serial.println(numIn);
+  char resp[numIn]; 
 
-  /* wait for the response then throw it away by
-    clearing the buffer with clearBuffer()  */
-  delay(300);
-  if (SDI12port.available()) {
-    while (SDI12port.available()) {
-      Serial.write(SDI12port.read());
+  for(byte a = 0; a < numIn; a++){
+    char b = SDI12port.read();
+    resp[a] = b;
+//    Serial.print(resp[a],DEC);
+  }
+  delay(20);
+//  Serial.println();
+  
+//  Serial.flush();
+  
+  Serial.println(resp[0]);
+  
+  if(resp[0] == newAddress){
+    success = true;
+    for (byte i = 0; i < sensorTot; i++) {    // find sensor in struct and update info
+    if (oldAddress == allSensors[i].addr) {
+      updateInfo(newAddress, oldAddress);
+      SDI12port.clearBuffer();     
+     }
     }
-    Serial.println("Success.") ;
+  } else {
+    success = false;
+  }
+  SDI12port.clearBuffer(); delay(30);
+  if(success == true) return true; else return false;
+  
+}
+
+void updateInfo(char a, char old) {
+  char addr = a;
+  char oldA = old;
+
+  // Populate object with metadata
+  for (byte i = 0; i < sensorTot; i++) {    // find sensor in struct and update info
+    if (oldA == allSensors[i].addr) {
+      allSensors[i].addr = addr;
+      allSensors[i].ID[0] = addr;
+      allSensors[i].cmd[0] = addr;
+      delay(20);
+      //        Serial.println(allSensors[i].addr);
+      //        Serial.println(allSensors[i].ID);
+      //        Serial.println(allSensors[i].cmd);
+    }
+    if (oldA == depths[i][0]) {      // update addresses is depths array
+      addr = depths[i][0];
+    }
+  }
+
+  depthToStruct();
+
+}
+
+byte yesNo(){
+  charinput();
+  if(charInput[0]){
+    if (charInput[0] == 'y' || charInput[0] == 'Y') {
+      return 1;
+    } 
+    else if (charInput[0] == 'n' || charInput[0] == 'N') {
+      return 2;
+    } else {
+      Serial.println(F("Invalid response"));
+      return 3; 
+    }
+  } else {
+    Serial.println(F("No user response"));
+    return 3;
   }
 }
