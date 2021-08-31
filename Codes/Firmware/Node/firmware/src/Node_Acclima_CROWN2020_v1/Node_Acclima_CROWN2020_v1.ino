@@ -26,7 +26,7 @@
    John Anderson, Acclima Inc.
    David Anderson, Acclima Inc.
 
-   Last edited: August 3, 2021
+   Last edited: August 31, 2021
 
    - Version History -
    Version 2020.05.06 fixes issue with data string when a sensor is unresponsive
@@ -68,7 +68,8 @@
                       Add yesNo()
                       Add lowInitBatt flag, skips initial fieldSync if battV is too low and come back to it later
                       Edit radio timing parameters  
-                      
+   Version 2021.08.31 Add option to only print newest logs since last print     
+                         
 */
 
 //===================================================================================================
@@ -109,7 +110,7 @@
 
 //------------- Declare Variables ---------------------------------
 
-char VERSION[] = "V2021.08.03";
+char VERSION[] = "V2021.08.31";
 
 //-----*** Identifiers ***-----
 
@@ -133,6 +134,7 @@ FactoryInfo facInfo;              // pull in factory info (serial num, etc) - se
 #define EEPROM_RH_PRESENT           (16 + EEPROMSHIFT)        //                                                    (was RHPresMem)
 #define EEPROM_DEPTHS               (24 + EEPROMSHIFT)        // first storage location for depths array
 #define EEPROM_DEBUG                (240 + EEPROMSHIFT)       // store debug setting
+#define EEPROM_LASTPRINT            (241 + EEPROMSHIFT)       // LogID of last log printed
 
 #define EEPROM_SERIALNUM            10
 #define EEPROM_OPTSRADIO            17
@@ -2282,7 +2284,7 @@ void menu()
       if (charInput[0] == 'a' || charInput[0] == 'A') {
         ft.printData();
       } else if (charInput[0] == 't' || charInput[0] == 'T') {
-        uint32_t lastLog = ft.logId() - 1;
+        /*uint32_t lastLog = ft.logId() - 1;
         //        Serial.println(lastLog);
         uint32_t toLog;
         if (lastLog > 10) {
@@ -2292,7 +2294,8 @@ void menu()
         }
         for (uint32_t j = lastLog; j > toLog; j--) {
           ft.printLog(ft.logAddrFromId(j));
-        }
+        }*/
+        printLatestLogs();
       } else {
         Serial.println();
         Serial.print(F("Invalid input. Returning to menu.")); delay(1000);
@@ -2642,8 +2645,7 @@ void setIDs() {
 
   byte toDo = yesNo();
   if (toDo == 1){ 
-    gatewayPresent = true;
-    EEPROM.update(EEPROM_GW_PRESENT, gatewayPresent);
+    gatewayPresent = true;   
     if (gatewayPresent == 1) {
       Serial.print(F("    Enter Gateway radio ID: "));
       getinput();
@@ -2656,6 +2658,7 @@ void setIDs() {
     gatewayPresent = false;
     Serial.println(F("Data logging only mode"));
   }
+  EEPROM.update(EEPROM_GW_PRESENT, gatewayPresent);
   delay(500);
 }
 
@@ -2719,6 +2722,27 @@ void clearDepths() {  // added 28May2020
   EEPROM.get(EEPROM_DEPTHS, depths); delay(100);
   memset(depths, 0, sizeof(depths));
 
+}
+
+void printLatestLogs(){
+  uint32_t lastPrint;
+  lastPrint = EEPROM.read(EEPROM_LASTPRINT);
+  uint32_t lastLog = ft.logId();
+
+  uint32_t i;
+  if (lastPrint != 0){
+    i = lastPrint;
+  } else {
+    i = 0;
+  }
+  
+  for (i; i < lastLog; i++){
+    ft.printLog(ft.logAddrFromId(i));
+    delay(10);
+  }
+
+  EEPROM.update(EEPROM_LASTPRINT,lastLog);
+  
 }
 
 //===================================================================================================
