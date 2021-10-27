@@ -303,16 +303,18 @@ void setup() {
 
   // Flash
 
-  if (!ft.init(pin_Flash_CS, 0xC228) || !ft.init(pin_Flash_CS, 0xEF40)) {   // add check for alternate Flash chip (Winbond W25Q64JV)
-    Serial.println("Flash failed to initialize!");
-    Serial.println("Erasing flash. This may take a few minutes...");
-    ft.chipErase();
-    long fiveMin = 1000 * 60 * 5;
-    if (!ft.wait(fiveMin)) {
-      Serial.println("Five minute timeout expired!");
-      // This is an error condition!  Flash did not complete chip erase within timeout.
-      // Figure out how to handle this error... maybe report it and halt?
-      // Don't remember how long timeout should be but we could measure it
+  if (!ft.init(pin_Flash_CS, 0xC228)) {   
+    if(!ft.init(pin_Flash_CS, 0xEF40)){      // add check for alternate Flash chip (Winbond W25Q64JV)
+      Serial.println("Flash failed to initialize!");
+      Serial.println("Erasing flash. This may take a few minutes...");
+      ft.chipErase();
+      long fiveMin = 1000 * 60 * 5;
+      if (!ft.wait(fiveMin)) {
+        Serial.println("Five minute timeout expired!");
+        // This is an error condition!  Flash did not complete chip erase within timeout.
+        // Figure out how to handle this error... maybe report it and halt?
+        // Don't remember how long timeout should be but we could measure it
+      }
     }
   }
 
