@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc.
 
-   Last edited: August 30, 2021
+   Last edited: September 10, 2021
 
    - Version History -
 
@@ -65,6 +65,9 @@
                       Increase startTimeout in GetNodeData from 500 to 1000
    Version 2021.08.30 Print gateway data string in Receiver Mode 
                       Set defaults for debug and recvMode if there is no info in EEPROM
+   Version 2021.09.02 Print gateway data every upload interval instead of measurement interval
+   Version 2021.09.09 Remove uploadInt = 0 as indication for Receiver Mode from config string
+                      In config string: Device key = 0 = Receiver Mode
 */
 
 //===================================================================================================
@@ -111,7 +114,7 @@
 
 // ------- Declare Variables -----------------------------------------------
 
-char VERSION[] = "V2021.08.30";
+char VERSION[] = "V2021.09.09";
 
 //-----*** Site/Gateway Identifier ***-----
 
@@ -342,14 +345,14 @@ void setup()
 
   debug = EEPROM.read(EEPROM_DEBUG);
 //  Serial.println(debug);
-  if (debug != 1 && debug != 0){
+  if (debug != 1 && debug != 0){          // if nothing stored in EEPROM
     debug = true;
     EEPROM.update(EEPROM_DEBUG,debug);
   }  debug = EEPROM.read(EEPROM_DEBUG);
 
   recvMode = EEPROM.read(EEPROM_RECVMODE);
 //  Serial.println(recvMode);
-  if (recvMode != 1 && recvMode != 0){
+  if (recvMode != 1 && recvMode != 0){    // if nothing stored in EEPROM
     recvMode = false;
     EEPROM.update(EEPROM_DEBUG,recvMode);
     uploadInt = 1;
@@ -500,10 +503,14 @@ void loop()
         digitalWrite(LED, LOW);
         delay(1000);
       }
-      else if(!recvMode) {
-        digitalWrite(LED, HIGH);
-        sendDataSD();                       // upload data from DUMP file to Hologram
-        digitalWrite(LED, LOW);
+      else {
+        if(!recvMode) {
+          digitalWrite(LED, HIGH);
+          sendDataSD();                       // upload data from DUMP file to Hologram
+          digitalWrite(LED, LOW);
+        } else {
+          gatewayInfo();
+        }
       }
       setAlarm2();
     }
@@ -1030,7 +1037,7 @@ void setAlarm2() {
   bool alarmSet = false;
 
   // 29Jun20: remove nextday variable and calc
-  if(!recvMode){  
+//  if(!recvMode){  
     if (uploadInt == 4) {                         // if upload interval = 4
       if (hrs + 2 == NISThr) {   // if next alarm should be time to get NIST time
         alarm2Hrs = NISThr % 24;
@@ -1056,10 +1063,10 @@ void setAlarm2() {
         alarm2Mins = uploadMins;
       }
     } 
-  } else {
-    alarm2Hrs = NISThr;
-    alarm2Mins = NISTmin;
-  }
+//  } else {
+//    alarm2Hrs = NISThr;
+//    alarm2Mins = NISTmin;
+//  }
 
   // Note for Alarm 2:
   // ALM2_MATCH_HOURS -- causes an alarm when the hours and minutes match.
@@ -1108,7 +1115,7 @@ void getData() {
     Serial.println();
     Serial.println("getData(): Querying Nodes for data...");
   }
-  gatewayInfo();
+//  gatewayInfo();
   dataSaved = false;
 
   // Step 1 - turn on radio
@@ -2486,10 +2493,11 @@ void MainMenu()
   Serial.print(F("Measurement Interval: "));
   Serial.println(String(interval) + " mins");
   if(!recvMode){
-    Serial.print(F("Upload interval (hrs): "));
-    Serial.println(uploadInt);
+    Serial.print(F("Upload interval (hrs): "));    
+  } else {
+    Serial.print(F("Gateway data interval (hrs): "));  
   }
-
+  Serial.println(uploadInt);
   readClock();                                       // get current date, time
   delay(20);
   Serial.print(F("Current date & time: "));
@@ -2559,7 +2567,11 @@ void MainMenu()
   Serial.println(F("  g  <--  Change Gateway radio ID"));
   if(!recvMode) Serial.println(F("  d  <--  Enter Hologram Device Key"));
   Serial.println(F("  n  <--  Enter Node radio IDs"));
-  if(!recvMode) Serial.println(F("  u  <--  Set data upload to cloud interval"));
+   if(!recvMode) {
+    Serial.println(F("  u  <--  Set data upload to cloud interval"));
+  } else {
+    Serial.println(F("  u  <--  Set gateway data interval"));
+  }
   Serial.println(F("  m  <--  Set measurement interval"));
   Serial.println(F("  r  <--  Receiver Mode on/off"));
   Serial.println();
@@ -2835,8 +2847,9 @@ void MainMenu()
       } else {
         recvMode = false;
         Serial.println(F("  Receiver Mode deactivated"));
-        uploadInterval();
       }
+      uploadInterval();
+      
       EEPROM.update(EEPROM_RECVMODE, recvMode);
       Serial.println();
       delay(500);
@@ -2849,7 +2862,7 @@ void MainMenu()
   Serial.println(F("Exit"));                       // exit
   Serial.println();
   delay(100);
-  if ( userinput == true) {
+  if (userinput == true) {
     digitalWrite(LED, LOW);
   }
 }
@@ -2863,7 +2876,7 @@ void MainMenu()
 void decodeConfig(char config_string[55]) {
 
 /* config string format: projectID,serial number,device key,gateway ID,number of nodes,node 1 radio ID,...,meas interval,upload int
-    ** device key & upload int = 0 --> Receiver mode
+    ** device key = 0 --> Receiver mode
 */
   bool configOK = true;
   byte configSize;
@@ -2928,7 +2941,7 @@ void decodeConfig(char config_string[55]) {
       projectID[i] = configG[i];
     }
     projectID[i] = 0;
-    Serial.print(F("projectID: "));
+    Serial.print(F("Project ID: "));
     Serial.println(projectID);
 
     //--- Match serial num
@@ -2977,7 +2990,7 @@ void decodeConfig(char config_string[55]) {
         y++;
       }
       devicekey[8] = 0;
-      Serial.print("device key: ");
+      Serial.print("Device key: ");
       Serial.println(devicekey);
       recvMode = false;
     } else if (devLen == 3){
@@ -3003,7 +3016,7 @@ void decodeConfig(char config_string[55]) {
     byte pos = commaPos[firstComma + 2] + 1;
     numNodes = configG[pos] - 48;
 
-    Serial.print("numNodes: ");
+    Serial.print("Number of nodes: ");
     Serial.println(numNodes);
 
     byte t = 0;
@@ -3016,9 +3029,9 @@ void decodeConfig(char config_string[55]) {
         }
         t++;
       }
-      Serial.print("NodeIDs[");
+      Serial.print("Node ID ");
       Serial.print(i);
-      Serial.print("]: ");
+      Serial.print(": ");
       Serial.println(NodeIDs[i]);
     }
 
@@ -3039,7 +3052,7 @@ void decodeConfig(char config_string[55]) {
     byte lastComma = commaCount - 1;
     interval = 10 * (configG[commaPos[lastComma - 1] + 1] - 48) + (configG[commaPos[lastComma - 1] + 2] - 48);
 
-    Serial.print("interval: ");
+    Serial.print("Measurement interval: ");
     Serial.println(interval);
 
     if (interval != 10 && interval != 15 && interval != 20 && interval != 30 && interval != 60) {
@@ -3050,16 +3063,18 @@ void decodeConfig(char config_string[55]) {
     //--- get upload interval
 
     uploadInt = configG[commaPos[lastComma] + 1] - 48;
-    Serial.print("uploadInt: ");
+    if(recvMode){
+      Serial.print("Gateway data interval: ");
+    } else {
+      Serial.print("Upload interval: ");
+    }
     Serial.println(uploadInt);
-    if(uploadInt == 0){
-      recvMode = true;
-      Serial.println(F("Receiver mode: no uploads"));
-    }   
-    else if (uploadInt != 1 && uploadInt != 4) {
-      Serial.println(F("ERROR: Invalid upload interval (every 1 or 4 hours)"));
+
+    if (uploadInt != 1 && uploadInt != 4) {
+      Serial.println(F("ERROR: Invalid interval (every 1 or 4 hours)"));
       configOK = false;
     }
+
   }
 
   if (!configOK) {
@@ -3081,7 +3096,7 @@ void decodeConfig(char config_string[55]) {
     EEPROM.update(EEPROM_NODE_COUNT, numNodes);                           // save number of reps to EEPROM
     EEPROM.put(EEPROM_NODEIDS, NodeIDs);
     EEPROM.update(EEPROM_ALRM1_INT, interval);
-    if(!recvMode) EEPROM.update(EEPROM_ALRM2_INT, uploadInt);
+    EEPROM.update(EEPROM_ALRM2_INT, uploadInt);
 
   }
 
@@ -3166,7 +3181,13 @@ void nodeIDs() {
 }
 
 void uploadInterval() {
-  Serial.println(F("Set upload interval to 1 or 4 hours."));
+  Serial.print(F("Set"));
+  if (!recvMode){
+    Serial.print(F(" upload"));
+  } else {
+    Serial.print(F(" gateway data"));
+  }
+  Serial.println(F(" interval to 1 or 4 hours."));
   Serial.print(F("Enter \"1\" or \"4\": "));
   byteInput();
   uploadInt = u_indata;

@@ -68,7 +68,8 @@
                       Add yesNo()
                       Add lowInitBatt flag, skips initial fieldSync if battV is too low and come back to it later
                       Edit radio timing parameters  
-   Version 2021.08.31 Add option to only print newest logs since last print     
+   Version 2021.08.31 Add option to only print newest logs since last print  
+   Version 2021.10.27 Add check for alternate Flash chip (Winbond W25Q64JV) Jedec ID = 0xEF40 
                          
 */
 
@@ -110,7 +111,7 @@
 
 //------------- Declare Variables ---------------------------------
 
-char VERSION[] = "V2021.08.31";
+char VERSION[] = "V2021.10.27";
 
 //-----*** Identifiers ***-----
 
@@ -302,7 +303,7 @@ void setup() {
 
   // Flash
 
-  if (!ft.init(pin_Flash_CS, 0xC228)) {
+  if (!ft.init(pin_Flash_CS, 0xC228) || !ft.init(pin_Flash_CS, 0xEF40)) {   // add check for alternate Flash chip (Winbond W25Q64JV)
     Serial.println("Flash failed to initialize!");
     Serial.println("Erasing flash. This may take a few minutes...");
     ft.chipErase();
@@ -2576,11 +2577,11 @@ void decodeConfig(char config_string[200]) {
         //                Serial.println(allSensors[r].addr);
         //        Serial.println();
         //        Serial.println(allSensors[r].depth);
-        for (byte j = 0; j < 6; j++) {
-          //          Serial.print(allSensors[r].depth[j],DEC);
-        }
+//        for (byte j = 0; j < 6; j++) {
+//                    Serial.print(allSensors[r].depth[j],DEC);
+//        }
 
-        Serial.println();
+//        Serial.println();
         if (missingSign) Serial.println(F("ERROR: Missing +/- before depth!"));
         delay(5);
       }
