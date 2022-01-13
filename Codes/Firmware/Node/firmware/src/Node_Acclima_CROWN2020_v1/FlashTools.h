@@ -26,6 +26,7 @@
 // NOTE: The following constants are specific to Macronix 64 Mbit MX25R6435F Flash chip:
 #define pin_Flash_CS        23          //Flash CS: physical pin 26 --> Arduino pin D23
 #define flash_deepPowerDown 0xB9        //Opcode to put flash into low power mode when sleeping
+#define flash_releasePowerDown 0xAB
 
 #define flash_totalSize     0x800000    //total bytes available of flash memory
 #define flash_sectorSize    0x1000      //4096 (0x1000) Bytes in each sector

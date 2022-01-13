@@ -26,7 +26,7 @@
    John Anderson, Acclima Inc.
    David Anderson, Acclima Inc.
 
-   Last edited: August 31, 2021
+   Last edited: November 20, 2021
 
    - Version History -
    Version 2020.05.06 fixes issue with data string when a sensor is unresponsive
@@ -70,7 +70,7 @@
                       Edit radio timing parameters  
    Version 2021.08.31 Add option to only print newest logs since last print  
    Version 2021.10.27 Add check for alternate Flash chip (Winbond W25Q64JV) Jedec ID = 0xEF40 
-                         
+   Version 2021.12.20 Fix flash_wake in FlashTools.cpp/h                        
 */
 
 //===================================================================================================
@@ -111,7 +111,7 @@
 
 //------------- Declare Variables ---------------------------------
 
-char VERSION[] = "V2021.10.27";
+char VERSION[] = "V2021.12.20";
 
 //-----*** Identifiers ***-----
 
@@ -1119,8 +1119,8 @@ void listenRespond() {
 
   if (duringInit) {
     timeToWait = timeSync - (fieldSyncStop - fieldSyncStart) + 1200000; // 15May20 add 20 minutes
-    Serial.print("timeToWait = ");
-    Serial.println(timeToWait);
+//    Serial.print("timeToWait = ");
+//    Serial.println(timeToWait);
   } else if (numMissed == 3) {
     long int_mSecs = (interval + 1) * 60000;
     timeToWait = int_mSecs;
@@ -1689,6 +1689,9 @@ void saveData() {
 
   memcpy(tmpChars, allData.c_str(), Len);
 
+  ft.flash_wake();  // added 14Dec21 to see if helps new flash chip
+  delay(30);
+  
   // Call function to write log
   if (ft.writeLog(tmpChars, Len)) {
     if (debug){

@@ -123,7 +123,8 @@ void FlashTools::flash_wake() {
   //Must toggle CS low for at least 20ns to release flash from deep sleep mode
   SPI.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
   digitalWrite(pin_Flash_CS, LOW);  //Assert chip select
-  __asm__ __volatile__("nop");
+//  __asm__ __volatile__("nop");
+  SPI.transfer(flash_releasePowerDown);
   digitalWrite(pin_Flash_CS, HIGH); //Release chip select
   SPI.endTransaction();
 }
