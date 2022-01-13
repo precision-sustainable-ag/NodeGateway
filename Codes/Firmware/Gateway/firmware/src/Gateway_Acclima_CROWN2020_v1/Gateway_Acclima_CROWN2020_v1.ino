@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc.
 
-   Last edited: September 10, 2021
+   Last edited: January 7, 2022
 
    - Version History -
 
@@ -68,6 +68,13 @@
    Version 2021.09.02 Print gateway data every upload interval instead of measurement interval
    Version 2021.09.09 Remove uploadInt = 0 as indication for Receiver Mode from config string
                       In config string: Device key = 0 = Receiver Mode
+   Version 2022.01.07 Remove disabling of watchdog timer
+                      Move uploadInterval into if statement (within menu), give 1 min for user
+                      input for menu
+                      Toggle recvMode depending on if GPRS_on is successful
+                      Move checking recvMode flag in various places 
+                      Add separate forceRecv flag to keep G in receiver mode at all times
+
 */
 
 //===================================================================================================
@@ -101,7 +108,7 @@
 #define BattV               24       // A0, for calculating Vin from battery
 #define Mbatt               14       // Switches voltage divider on/off
 #define baudRate            57600    // John, 27-Mar-2019: Changed from 115200 to 57600 because when MCU at 8 MHz the sampling resolution is reduced
-#define maxNodes            6        // AIT, 14-Jan-2020: Changed from 10
+#define maxNodes            8        // AIT, 14-Jan-2020: Changed from 10
 #define FONA_MSG_SIZE       1000     // AIT 06-Mar-2020: Changed to accomodate longer data strings using sensors IDs, was: 350   // max length for sending to Cloud
 #define pin_SD_OFF          1        // physical pin 41  D1
 #define pin_MOSI            5        // physical pin 1  D5
@@ -114,7 +121,7 @@
 
 // ------- Declare Variables -----------------------------------------------
 
-char VERSION[] = "V2021.09.09";
+char VERSION[] = "V2022.01.07";
 
 //-----*** Site/Gateway Identifier ***-----
 
@@ -133,7 +140,7 @@ unsigned long serNum;   // serial number
 #define EEPROM_NODEIDS              (7 + EEPROMSHIFT)         // first storage location for nodeIDs array           (was nodeIDsMem)
 #define EEPROM_DEVKEY               (20 + EEPROMSHIFT)        // first storage location for device key array        (was devkeyMem)
 #define EEPROM_ALRM2_INT            (30 + EEPROMSHIFT)        // storage location for uploadInt                     (was alarm2Mem)  
-#define EEPROM_RECVMODE             (70 + EEPROMSHIFT)
+#define EEPROM_FORCERECV            (70 + EEPROMSHIFT)
 #define EEPROM_DEBUG                (71 + EEPROMSHIFT)
 #define EEPROM_OPTSRADIO            17
 #define EEPROM_SERIALNUM            10
@@ -170,6 +177,7 @@ bool    recvMode = false;                      // will skip cellular functions i
 bool    debug = true;
 bool    sim_detect = true;
 bool    lowInitBatt = false;
+bool    forceRecv = false;
 
 //-----*** for LoRa Radio ***-----
 
@@ -350,11 +358,11 @@ void setup()
     EEPROM.update(EEPROM_DEBUG,debug);
   }  debug = EEPROM.read(EEPROM_DEBUG);
 
-  recvMode = EEPROM.read(EEPROM_RECVMODE);
+  forceRecv = EEPROM.read(EEPROM_FORCERECV);
 //  Serial.println(recvMode);
-  if (recvMode != 1 && recvMode != 0){    // if nothing stored in EEPROM
-    recvMode = false;
-    EEPROM.update(EEPROM_DEBUG,recvMode);
+  if (forceRecv != 1 && forceRecv != 0){    // if nothing stored in EEPROM
+    forceRecv = false;
+    EEPROM.update(EEPROM_FORCERECV,forceRecv);
     uploadInt = 1;
     EEPROM.update(EEPROM_ALRM2_INT,uploadInt);  
   }
@@ -367,7 +375,7 @@ void setup()
 
   //--- Power saving
 
-  wdt_disable();                                 // turn off watchdog timer
+//  wdt_disable();                                 // turn off watchdog timer
   RTC_osc_off();                                 // Turn off 32kHz output
 
   //--- Initialize radio settings
@@ -393,6 +401,7 @@ void setup()
   //--- Go to main menu for setup
 
   MainMenu();
+  if (forceRecv) debug = false;
 
   //--- Time sync in field
 
@@ -460,7 +469,7 @@ void loop()
       fieldSync();
       getData();
       saveData(); delay(1000);             // if microSD fails, G will send data to Hologram immediately (sendDataArray())
-      if(!recvMode){
+      if(!forceRecv){
         sendDataSD();
       }
       resetArrays();
@@ -486,7 +495,7 @@ void loop()
       fieldSync();
       getData();
       saveData(); delay(1000);             // if microSD fails, G will send data to Hologram immediately (sendDataArray())
-      if(!recvMode){
+      if(!forceRecv){
         sendDataSD();
       }
       resetArrays();
@@ -504,7 +513,7 @@ void loop()
         delay(1000);
       }
       else {
-        if(!recvMode) {
+        if(!forceRecv) {
           digitalWrite(LED, HIGH);
           sendDataSD();                       // upload data from DUMP file to Hologram
           digitalWrite(LED, LOW);
@@ -644,7 +653,7 @@ void SD_on() {
 
 void fieldSync() {
 
-  if (duringInit && !recvMode) {
+  if (duringInit && !recvMode && !forceRecv) {
     sendDataSD(); //29Jun20: send data in dump file
     startTime = millis();
   }
@@ -1317,10 +1326,10 @@ void saveData() {
     dataSaved = true;
 
   } else {
-    if(!recvMode){
+//    if(!recvMode){
       if(debug) Serial.println("ERROR: Failed to Open SD. Sending Data Now...");
       sendDataArray();        // upload data immediately to Hologram if SD fails
-    }
+//    }
     setAlarm2();      // 22Feb21
   }
   if (!recvMode) Serial.println("Done");
@@ -1530,7 +1539,7 @@ void sendDataSD() {
   memset(aux_str, 0, sizeof(aux_str));
   delay(50);
 
-  if (gStatus == 1) {
+  if (gStatus == 1 && !recvMode) {    // added 05Jan22, without recvMode part G still tries to connect
     boolean tcpSent = true;   // 12Jul21 want to know when send fails    
     rssi = fona.getRSSI();     // 08Jan21
     dBm = 0 - (113 - 2 * rssi);   // should be negative
@@ -1722,6 +1731,8 @@ void sendDataSD() {
   delay(3000);
   fonaOff();
 
+  if (recvMode) gatewayInfo();  // 05Jan22 save gateway info to SD if G not connected to network
+
   // Check Alarms
   if (!duringInit) {
     uint8_t statusReg = RTC.checkAlmStat();
@@ -1816,7 +1827,7 @@ void sendDataArray() {
   fonaOn();
   delay(3000);
 
-  if (gStatus == 1) {
+  if (gStatus == 1 && !recvMode) {
     Serial.println("sendDataArray(): Sending data from array...");
     rssi = fona.getRSSI();     // 08Jan21
     dBm = 113 - 2 * rssi;
@@ -2011,7 +2022,8 @@ void fonaOn() {
       if (debug){
         Serial.println(ccid);
         Serial.println("SIM detected");
-      }      
+      } 
+      sim_detect = true;     
     }
 
     if (init1 && sim_detect) {
@@ -2156,12 +2168,15 @@ void GPRS_on() {
   if (!startGPRS(true)) {
     Serial.println(F("ERROR: GPRS failed to turn on"));
     gStatus = 0;
+    recvMode = true;
   }
   else {
     Serial.println(F("GPRS on"));
     gStatus = 1;
+    recvMode = false;
     //    getNetworkStatFull();  // 23Feb21
   }
+  if (forceRecv) recvMode = true;
   delay(3000);
 }
 
@@ -2444,7 +2459,7 @@ void MainMenu()
   EEPROM.get(EEPROM_NODEIDS, NodeIDs);
   interval = EEPROM.read(EEPROM_ALRM1_INT);
 
-  recvMode = EEPROM.read(EEPROM_RECVMODE);
+  forceRecv = EEPROM.read(EEPROM_FORCERECV);
   debug = EEPROM.read(EEPROM_DEBUG);
   delay(30);
 
@@ -2452,8 +2467,8 @@ void MainMenu()
 
   //  Serial.println();
   Serial.println(F("Soil Water Data Network - Cellular Gateway"));
-  if(recvMode){
-    Serial.println(F("--- Receiver Mode ---"));
+  if(forceRecv){
+    Serial.println(F("--- Receiver Only Mode ---"));
   }
   Serial.print(F("Version "));
   Serial.println(VERSION);
@@ -2467,7 +2482,7 @@ void MainMenu()
   Serial.println(projectID);
   Serial.print(F("Gateway Radio ID: "));
   Serial.println(GatewayID);
-  if(!recvMode){
+  if(!forceRecv){
     Serial.print(F("Device key: "));
     Serial.println(devicekey);
   }
@@ -2492,7 +2507,7 @@ void MainMenu()
 
   Serial.print(F("Measurement Interval: "));
   Serial.println(String(interval) + " mins");
-  if(!recvMode){
+  if(!forceRecv){
     Serial.print(F("Upload interval (hrs): "));    
   } else {
     Serial.print(F("Gateway data interval (hrs): "));  
@@ -2553,21 +2568,21 @@ void MainMenu()
     Serial.println(F("   x  <--  Exit menu"));            // exit
   */
   Serial.println(F("User Options:"));
-  if(!recvMode) Serial.println(F("  1  <--  Cellular Signal Scouting Mode")); // 06Aug20
+  if(!forceRecv) Serial.println(F("  1  <--  Cellular Signal Scouting Mode")); // 06Aug20
   Serial.println(F("  c  <--  Set clock"));    // set clock to NIST time
   Serial.println(F("  p  <--  Print node data to screen"));
   Serial.println(F("  f  <--  See list of saved files"));
   Serial.println(F("  e  <--  Erase microSD card"));
   Serial.println(F("  o  <--  Debug statements on/off"));
-  if(!recvMode) Serial.println(F("  4  <--  Clear forbidden networks list"));
+  if(!forceRecv) Serial.println(F("  4  <--  Clear forbidden networks list"));
   Serial.println();
   Serial.println(F("Configuration Options:"));
   Serial.println(F("  0  <--  Enter configuration string"));    // 25-Feb-2020: enter config info all at once 
   Serial.println(F("  i  <--  Enter project ID"));                      // set siteID
   Serial.println(F("  g  <--  Change Gateway radio ID"));
-  if(!recvMode) Serial.println(F("  d  <--  Enter Hologram Device Key"));
+  if(!forceRecv) Serial.println(F("  d  <--  Enter Hologram Device Key"));
   Serial.println(F("  n  <--  Enter Node radio IDs"));
-   if(!recvMode) {
+   if(!forceRecv) {
     Serial.println(F("  u  <--  Set data upload to cloud interval"));
   } else {
     Serial.println(F("  u  <--  Set gateway data interval"));
@@ -2581,7 +2596,7 @@ void MainMenu()
   Serial.print(F("Enter choice: "));
   Serial.flush();
 
-  timeout = millis() + 30000;                         // wait 30 secs for input
+  timeout = millis() + 60000;                         // wait 30 secs for input
   while (millis() < timeout)
   {
     menuinput = 120;
@@ -2659,9 +2674,10 @@ void MainMenu()
 
     case 109: case 77:        //--------- m - Set measurement interval----------------------------
       Serial.println();
-      if (!measureInt() && !recvMode) {
-        Serial.println(F("ERROR: upload interval must be entered first. Returning to menu..."));
-      }
+//      if (!measureInt() && !recvMode) {
+//        Serial.println(F("ERROR: upload interval must be entered first. Returning to menu..."));
+//      }
+      measureInt();
       delay(500);
       MainMenu();
       break;
@@ -2837,20 +2853,23 @@ void MainMenu()
       
     case 'r': case 'R':        // ------ r - Set to Receiver Mode ---------------------------------------------
       Serial.println();
-      Serial.println(F("NOTE: Receiver mode will not upload data to Hologram"));
+      Serial.println(F("NOTE: Receiver only mode will not upload data to Hologram"));
       Serial.print(F("Would you like to use Receiver Mode? y/n: "));
       charinput();
 
       if(charInput[0] == 'y' || charInput[0] == 'Y'){
-        recvMode = true;       
+        forceRecv = true;       
         Serial.println(F("  Receiver Mode activated"));
+        uploadInt = 1;
+        EEPROM.update(EEPROM_ALRM2_INT, uploadInt);
       } else {
-        recvMode = false;
+        forceRecv = false;
         Serial.println(F("  Receiver Mode deactivated"));
+        uploadInterval();
       }
-      uploadInterval();
       
-      EEPROM.update(EEPROM_RECVMODE, recvMode);
+      
+      EEPROM.update(EEPROM_FORCERECV, forceRecv);
       Serial.println();
       delay(500);
 
@@ -2992,11 +3011,11 @@ void decodeConfig(char config_string[55]) {
       devicekey[8] = 0;
       Serial.print("Device key: ");
       Serial.println(devicekey);
-      recvMode = false;
+      forceRecv = false;
     } else if (devLen == 3){
       if(configG[commaPos[firstComma] + 1] == '0'){
-        Serial.println("Receiver mode activated");
-        recvMode = true;
+        Serial.println("Receiver only mode activated");
+        forceRecv = true;
       }
     }
 
@@ -3063,7 +3082,7 @@ void decodeConfig(char config_string[55]) {
     //--- get upload interval
 
     uploadInt = configG[commaPos[lastComma] + 1] - 48;
-    if(recvMode){
+    if(forceRecv){
       Serial.print("Gateway data interval: ");
     } else {
       Serial.print("Upload interval: ");
@@ -3091,8 +3110,8 @@ void decodeConfig(char config_string[55]) {
     }
     EEPROM.update(EEPROM_FLAG_RADIO, radioSwitch);
     LoRa.setThisAddress(GatewayID);
-    EEPROM.update(EEPROM_RECVMODE,recvMode);
-    if(!recvMode) EEPROM.put(EEPROM_DEVKEY, devicekey);
+    EEPROM.update(EEPROM_FORCERECV,forceRecv);
+    if(!forceRecv) EEPROM.put(EEPROM_DEVKEY, devicekey);
     EEPROM.update(EEPROM_NODE_COUNT, numNodes);                           // save number of reps to EEPROM
     EEPROM.put(EEPROM_NODEIDS, NodeIDs);
     EEPROM.update(EEPROM_ALRM1_INT, interval);
@@ -3182,7 +3201,7 @@ void nodeIDs() {
 
 void uploadInterval() {
   Serial.print(F("Set"));
-  if (!recvMode){
+  if (!forceRecv){
     Serial.print(F(" upload"));
   } else {
     Serial.print(F(" gateway data"));
@@ -3203,66 +3222,23 @@ void uploadInterval() {
   delay(20);
 }
 
-boolean measureInt() {
-
-  if (uploadInt == 4) {
-    Serial.print(F("Enter measurement interval (10, 15, 20, 30, or 60 mins): "));
-    Serial.flush();
-    boolean intSet = false;
-    long utimeout = millis() + 10000;
-    while (intSet == false && millis() < utimeout) {
-      getinput();
-      if (indata != 10 && indata != 15 && indata != 20 && indata != 30 && indata != 60) {
-        Serial.print(F("Invalid interval. Enter measurement interval (10, 15, 20, 30, or 60): "));
-        Serial.flush();
-      }
-
-      // CODE BELOW NEEDS TESTING
-      /* else if(indata == 15 && numNodes > 2){   // 08Jan21: numNodes limit for 10 minutes?
-        Serial.println(F("ERROR: maximum 2 Nodes at 15 minute interval"));
-        Serial.println(F("Please enter another measurement interval: "));
-        } else if (indata == 20 && numNodes > 4){
-        Serial.println(F("ERROR: maximum 4 Nodes at 20 minute interval"));
-        Serial.println(F("Please enter another measurement interval: "));
-        } */
-
-      else {
-        intSet = true;
-        interval = indata;
-        EEPROM.update(EEPROM_ALRM1_INT, interval);
-        delay(20);
-        return true;
-      }
+void measureInt() {
+  Serial.print(F("Enter measurement interval (10, 15, 20, 30, or 60 mins): "));
+  Serial.flush();
+  boolean intSet = false;
+  long utimeout = millis() + 10000;
+  while (intSet == false && millis() < utimeout) {
+    getinput();
+    if (indata != 10 && indata != 15 && indata != 20 && indata != 30 && indata != 60) {
+      Serial.print(F("Invalid interval. Enter measurement interval (10, 15, 20, 30, or 60): "));
+      Serial.flush();
     }
-  } else if (uploadInt == 1) {
-    Serial.print(F("Enter measurement interval (10, 15, 20, 30, or 60 mins): "));
-    Serial.flush();
-    boolean intSet = false;
-    while (intSet == false) {
-      getinput();
-      if (indata != 10 && indata != 15 && indata != 20 && indata != 30 && indata != 60) {
-        Serial.print(F("Invalid interval. Enter measurement interval (10, 15, 20, 30, or 60): "));
-        Serial.flush();
-      }
-      // CODE BELOW NEEDS TESTING
-      /*
-        else if(indata == 10 && numNodes > 3){
-        Serial.println(F("ERROR: maximum 3 Nodes at 10 minute interval"));
-        Serial.println(F("Please enter another measurement interval: "));
-        } else if(indata == 15 && numNodes > 8){
-        Serial.println(F("ERROR: maximum 8 Nodes at 15 minute interval"));
-        Serial.println(F("Please enter another measurement interval: "));
-        } */
-      else {
-        intSet = true;
-        interval = indata;
-        EEPROM.update(EEPROM_ALRM1_INT, interval);
-        return true;
-      }
+    else {
+      intSet = true;
+      interval = indata;
+      EEPROM.update(EEPROM_ALRM1_INT, interval);
+      delay(20);
     }
-  }
-  else {  // uploadInt != 1 or 4
-    return false;
   }
 }
 
