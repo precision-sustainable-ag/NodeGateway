@@ -1,13 +1,13 @@
-﻿/* SDI-12 library for Acclima Node based off Stroud Water Research Center Arduino-SDI-12 library
- *  
- *  .cpp file
- *  
- *  Alondra Thompson
- *  December 2018
- */
+//﻿SDI-12 library for Acclima Node based off Stroud Water Research Center Arduino-SDI-12 library
+   
+//   .cpp file
+//   
+//   Alondra Thompson
+//   December 2018
+ 
 
- /*=========== 0. Includes, Defines, & Variable Declarations =============
-*/
+// =========== 0. Includes, Defines, & Variable Declarations =============
+
 
 #include "AcclimaSDI12.h"                   // Header file for this library
 //#include <Arduino.h>

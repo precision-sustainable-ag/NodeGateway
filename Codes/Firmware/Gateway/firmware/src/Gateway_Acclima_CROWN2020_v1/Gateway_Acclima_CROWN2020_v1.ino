@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc.
 
-   Last edited: January 7, 2022
+   Last edited: January 19, 2022
 
    - Version History -
 
@@ -74,6 +74,7 @@
                       Toggle recvMode depending on if GPRS_on is successful
                       Move checking recvMode flag in various places 
                       Add separate forceRecv flag to keep G in receiver mode at all times
+   Version 2022.01.19 Change menu routine to show/hide configuration options
 
 */
 
@@ -121,7 +122,7 @@
 
 // ------- Declare Variables -----------------------------------------------
 
-char VERSION[] = "V2022.01.07";
+char VERSION[] = "V2022.01.19";
 
 //-----*** Site/Gateway Identifier ***-----
 
@@ -161,6 +162,7 @@ char      charInput[20];                         // holder for character user in
 char      incomingChar[20];                      // holder for incoming char or byte values
 uint8_t   u_indata;                              // holder for incoming uint8_t value (byteInput())
 bool      clockMenu = false;                     // don't send time update message if clock update initiated form Main Menu
+bool      viewConfig = false;
 
 //-----*** for battery voltage calculation ***-----
 
@@ -2438,12 +2440,17 @@ void MainMenu()
   if (Serial.available() > 0) {
     Serial.read();       // clear serial input buffer
   }
+
+  //--- fill in data filename
+  
   datafile[1] = (GatewayID / 10) + 48;
   datafile[2] = (GatewayID % 10) + 48;
 
   delay(50);
-
-  numNodes = EEPROM.read(EEPROM_NODE_COUNT);                        // read variables stored in memory
+  
+  //--- read variables stored in memory
+  
+  numNodes = EEPROM.read(EEPROM_NODE_COUNT);                        
 
   if (!radioSwitch) {
     GatewayID = EEPROM.read(EEPROM_DEFAULT_RADIO);
@@ -2464,7 +2471,7 @@ void MainMenu()
   delay(30);
 
   battV = calcbattV();
-
+ 
   //  Serial.println();
   Serial.println(F("Soil Water Data Network - Cellular Gateway"));
   if(forceRecv){
@@ -2571,25 +2578,30 @@ void MainMenu()
   if(!forceRecv) Serial.println(F("  1  <--  Cellular Signal Scouting Mode")); // 06Aug20
   Serial.println(F("  c  <--  Set clock"));    // set clock to NIST time
   Serial.println(F("  p  <--  Print node data to screen"));
-  Serial.println(F("  f  <--  See list of saved files"));
-  Serial.println(F("  e  <--  Erase microSD card"));
+  Serial.println(F("  f  <--  See list of saved files")); 
   Serial.println(F("  o  <--  Debug statements on/off"));
   if(!forceRecv) Serial.println(F("  4  <--  Clear forbidden networks list"));
-  Serial.println();
-  Serial.println(F("Configuration Options:"));
-  Serial.println(F("  0  <--  Enter configuration string"));    // 25-Feb-2020: enter config info all at once 
-  Serial.println(F("  i  <--  Enter project ID"));                      // set siteID
-  Serial.println(F("  g  <--  Change Gateway radio ID"));
-  if(!forceRecv) Serial.println(F("  d  <--  Enter Hologram Device Key"));
-  Serial.println(F("  n  <--  Enter Node radio IDs"));
-   if(!forceRecv) {
-    Serial.println(F("  u  <--  Set data upload to cloud interval"));
+  if(!viewConfig){ 
+    Serial.println(F("  2  <--  Show configuration options"));
   } else {
-    Serial.println(F("  u  <--  Set gateway data interval"));
+    Serial.println();
+    Serial.println(F("Configuration Options:"));
+    Serial.println(F("  0  <--  Enter configuration string"));    // 25-Feb-2020: enter config info all at once 
+    Serial.println(F("  i  <--  Enter project ID"));                      // set siteID
+    Serial.println(F("  g  <--  Change Gateway radio ID"));
+    if(!forceRecv) Serial.println(F("  d  <--  Enter Hologram Device Key"));
+    Serial.println(F("  n  <--  Enter Node radio IDs"));
+     if(!forceRecv) {
+      Serial.println(F("  u  <--  Set data upload to cloud interval"));
+    } else {
+      Serial.println(F("  u  <--  Set gateway data interval"));
+    }
+    Serial.println(F("  m  <--  Set measurement interval"));
+    Serial.println(F("  r  <--  Receiver Mode on/off"));
+    Serial.println(F("  e  <--  Erase microSD card"));
+    Serial.println(F("  2  <--  Hide configuration options"));
+    Serial.println();
   }
-  Serial.println(F("  m  <--  Set measurement interval"));
-  Serial.println(F("  r  <--  Receiver Mode on/off"));
-  Serial.println();
   Serial.println(F("  x  <--  Exit menu"));             // exit
   Serial.println();
 
@@ -2618,6 +2630,22 @@ void MainMenu()
       Serial.println();
       Serial.println("Entering signal scouting mode...");
       scoutMode();
+      
+      MainMenu();
+      break;
+
+    case '2':                 // ------ 2 - Show/hide config options ---------------------------------------------
+      delay(500);
+      if (!viewConfig){
+        Serial.println("Activating configuration options...");
+        viewConfig = true;
+      } else {
+        Serial.println("Hiding configuration options...");
+        viewConfig = false;
+      }
+      Serial.println();
+      delay(1000);
+      
       MainMenu();
       break;
 

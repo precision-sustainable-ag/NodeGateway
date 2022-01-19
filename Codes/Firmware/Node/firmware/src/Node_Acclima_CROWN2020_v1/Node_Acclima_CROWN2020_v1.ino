@@ -26,7 +26,7 @@
    John Anderson, Acclima Inc.
    David Anderson, Acclima Inc.
 
-   Last edited: November 20, 2021
+   Last edited: January 19, 2022
 
    - Version History -
    Version 2020.05.06 fixes issue with data string when a sensor is unresponsive
@@ -70,7 +70,9 @@
                       Edit radio timing parameters  
    Version 2021.08.31 Add option to only print newest logs since last print  
    Version 2021.10.27 Add check for alternate Flash chip (Winbond W25Q64JV) Jedec ID = 0xEF40 
-   Version 2021.12.20 Fix flash_wake in FlashTools.cpp/h                        
+   Version 2021.12.20 Fix flash_wake in FlashTools.cpp/h
+   Version 2022.01.19 Change menu routine to show/hide configuration options
+                        
 */
 
 //===================================================================================================
@@ -111,7 +113,7 @@
 
 //------------- Declare Variables ---------------------------------
 
-char VERSION[] = "V2021.12.20";
+char VERSION[] = "V2022.01.19";
 
 //-----*** Identifiers ***-----
 
@@ -173,6 +175,7 @@ char  charInput[200];
 unsigned long serNum;               // serial number
 bool skipScan = false;              // tracks if sensor scan was skipped by user
 bool debug = false;
+bool viewConfig = false;
 
 //-----*** Data Variables ***-----
 
@@ -2102,28 +2105,37 @@ void menu()
 
   Serial.println();
 
-  Serial.println(F("Menu options: "));
-  Serial.println(F("   0  <--  Enter configuration string"));       // NEW 24-Feb-2020: enter variables all at once
-  Serial.println(F("   d  <--  Enter sensor depths"));              // 4-Mar-2020
-  Serial.println(F("   c  <--  Set clock"));                        // change month, day, year, hour, minute
-  Serial.println(F("   i  <--  Enter project ID"));                 // enter project ID
-  Serial.println(F("   g  <--  Enter Gateway radio ID"));
-  Serial.println(F("   r  <--  Change Node radio ID"));
-  Serial.println(F("   m  <--  Set measurement interval"));         // choose how often to take measurements from sensors
+  Serial.println(F("Sensor menu: "));
   Serial.println(F("   n  <--  Scan for devices on SDI-12 bus"));   // added 01/13/2020
   Serial.println(F("   a  <--  Change SDI-12 sensor addresses"));
+  Serial.println(F("   d  <--  Enter sensor depths"));              // 4-Mar-2020
   Serial.println(F("   t  <--  Test sensors"));                     // takes three measurements from sensors
-  //  Serial.println(F("   S  <--  Synchronize Gateway & Node clocks"));  // get time from Gateway, update clock
-  Serial.println(F("   p  <--  Print data to screen"));         // print data to Serial Monitor
-  Serial.println(F("   e  <--  Erase all data"));                   // delete all data from Flash
-  Serial.println(F("   b  <--  Turn debug statements on/off"));    
+  Serial.println(F("   2  <--  View configuration options"));
+  if (viewConfig){
+    Serial.println();
+    Serial.println(F("Configuration Options:"));
+    Serial.println(F("   0  <--  Enter configuration string"));       // NEW 24-Feb-2020: enter variables all at once
+//    Serial.println(F("   d  <--  Enter sensor depths"));              // 4-Mar-2020
+    Serial.println(F("   c  <--  Set clock"));                        // change month, day, year, hour, minute
+    Serial.println(F("   i  <--  Enter project ID"));                 // enter project ID
+    Serial.println(F("   g  <--  Enter Gateway radio ID"));
+    Serial.println(F("   r  <--  Change Node radio ID"));
+    Serial.println(F("   m  <--  Set measurement interval"));         // choose how often to take measurements from sensors
+//    Serial.println(F("   n  <--  Scan for devices on SDI-12 bus"));   // added 01/13/2020
+//    Serial.println(F("   a  <--  Change SDI-12 sensor addresses"));
+//    Serial.println(F("   t  <--  Test sensors"));                     // takes three measurements from sensors
+    Serial.println(F("   p  <--  Print data to screen"));             // print data to Serial Monitor
+    Serial.println(F("   b  <--  Turn debug statements on/off"));
+    Serial.println(F("   e  <--  Erase all data"));                   // delete all data from Flash
+    Serial.println(F("   2  <--  Hide configuration options"));
+  }  
   Serial.println(F("   x  <--  Exit menu"));                        // exit
   Serial.print(F("Enter choice: "));
   byte   menuinput;                                    // user input to menu prompt
   long  timeout;                                      // length of time to wait for user
 
   timeout = millis(); // + 30000;                                      // wait 30 secs for input, edited 01/13/2020
-  while ((millis() - timeout) < 30000)
+  while ((millis() - timeout) < 60000)
   {
     menuinput = 120;
     if (Serial.available() > 0)                                    // if something typed, go to menu
@@ -2155,6 +2167,21 @@ void menu()
 
       menu();
       break;
+
+    case '2':                   // ------ 2 - Show/hide config options ---------------------------------------------
+      delay(500);
+      if (!viewConfig){
+        Serial.println("Activating configuration options...");
+        viewConfig = true;
+      } else {
+        Serial.println("Hiding configuration options...");
+        viewConfig = false;
+      }
+      Serial.println();
+      delay(1000);
+      
+      menu();
+      break;     
 
     case 100: case 68:           // ------ d - Enter sensor depths ---------------------------------------------
       clearDepths();    // 28May2020
