@@ -2576,7 +2576,7 @@ void MainMenu()
   */
   Serial.println(F("User Options:"));
   if(!forceRecv) Serial.println(F("  1  <--  Cellular Signal Scouting Mode")); // 06Aug20
-  Serial.println(F("  c  <--  Set clock"));    // set clock to NIST time
+  
   Serial.println(F("  p  <--  Print node data to screen"));
   Serial.println(F("  f  <--  See list of saved files")); 
   Serial.println(F("  o  <--  Debug statements on/off"));
@@ -2598,6 +2598,7 @@ void MainMenu()
     }
     Serial.println(F("  m  <--  Set measurement interval"));
     Serial.println(F("  r  <--  Receiver Mode on/off"));
+    Serial.println(F("  c  <--  Set clock"));    // set clock to NIST time
     Serial.println(F("  e  <--  Erase microSD card"));
     Serial.println(F("  2  <--  Hide configuration options"));
     Serial.println();
