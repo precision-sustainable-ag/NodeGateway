@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc.
 
-   Last edited: January 19, 2022
+   Last edited: February 11, 2022
 
    - Version History -
 
@@ -75,6 +75,7 @@
                       Move checking recvMode flag in various places 
                       Add separate forceRecv flag to keep G in receiver mode at all times
    Version 2022.01.19 Change menu routine to show/hide configuration options
+   Version 2022.02.11 Move clear forbidden networks option from config options to user options
 
 */
 
@@ -122,7 +123,7 @@
 
 // ------- Declare Variables -----------------------------------------------
 
-char VERSION[] = "V2022.01.19";
+char VERSION[] = "V2022.02.11";
 
 //-----*** Site/Gateway Identifier ***-----
 
@@ -2578,6 +2579,7 @@ void MainMenu()
   if(!forceRecv) Serial.println(F("  1  <--  Cellular Signal Scouting Mode")); // 06Aug20
   
   Serial.println(F("  p  <--  Print node data to screen"));
+  Serial.println(F("  r  <--  Receiver Mode on/off"));
   Serial.println(F("  f  <--  See list of saved files")); 
   Serial.println(F("  o  <--  Debug statements on/off"));
   if(!forceRecv) Serial.println(F("  4  <--  Clear forbidden networks list"));
@@ -2596,8 +2598,7 @@ void MainMenu()
     } else {
       Serial.println(F("  u  <--  Set gateway data interval"));
     }
-    Serial.println(F("  m  <--  Set measurement interval"));
-    Serial.println(F("  r  <--  Receiver Mode on/off"));
+    Serial.println(F("  m  <--  Set measurement interval"));    
     Serial.println(F("  c  <--  Set clock"));    // set clock to NIST time
     Serial.println(F("  e  <--  Erase microSD card"));
     Serial.println(F("  2  <--  Hide configuration options"));
