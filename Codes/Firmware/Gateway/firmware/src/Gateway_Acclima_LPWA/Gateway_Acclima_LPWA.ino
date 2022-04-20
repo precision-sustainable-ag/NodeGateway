@@ -1,11 +1,11 @@
  
-/*PSA Cellular Gateway
+/*PSA Cellular Gateway - LPWA module
 
    Main Components:
       - ATMega1284P with MoteinoMEGA core
       - DS3231 Precision RTC
       - LoRa radio transceiver
-      - SimCom 5320A cellular module
+      - SimCom 7070G cellular module
       - microSD slot
  
     Main Functions:
@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc.
 
-   Last edited: February 11, 2022
+   Last edited: April 20, 2022
 
    - Version History -
 
@@ -59,7 +59,7 @@
                       Increase timeoutPacket to 9500 from 2000 to accomodate max sensor scenario (approx. packet len = 1950, air time = 2878 ms)
                       Increase number of tries for getting data from each node from 3 to numNodes*3
                       Add getGPRSNetworkStatus, increase NETOPEN timeout to 120000 ms
-   Version 2021.07.08 Add Receiver mode and debug  options, check for sim card during fonaOn                      
+   Version 2021.07.08 Add Receiver mode and debug  options, check for sim card during pwr_cellular                      
    Version 2021.07.13 Edit sendDataSD so that the dump file doesn't get deleted if one upload fails, won't send junk chars                           
    Version 2021.08.02 Skip fieldSync if battV is low on startup
                       Increase startTimeout in GetNodeData from 500 to 1000
@@ -76,6 +76,9 @@
                       Add separate forceRecv flag to keep G in receiver mode at all times
    Version 2022.01.19 Change menu routine to show/hide configuration options
    Version 2022.02.11 Move clear forbidden networks option from config options to user options
+   Version 2022.04.20 Replace Adafruit_FONA.h with SIMCOM_7070G.h
+                      Edit cellular functions to be capatible with SIM7070G LPWA module:
+                      sendInit, NISTtime, sendNIST, sendDataSD, sendDataArray, scoutMode
 
 */
 
@@ -90,11 +93,12 @@
 #include "avr/sleep.h"                             // sleep functions
 #include "DS3232RTC.h"                             // RTC library 
 #include <ACReliableMessage.h>                     // replaced radiohead libraries with this one, which uses RadioHead
-#include "Adafruit_FONA.h"                         // for Adafruit FONA 3G cellular breakout
+//#include "Adafruit_FONA.h"                         // for Adafruit FONA 3G cellular breakout
+#include "SIMCOM_7070G.h"
+#include <PCAL6416.h>
 #include "avr/io.h"
 #include "avr/interrupt.h"
 #include "avr/wdt.h"                               // controls watchdog timer (we want to turn it off)
-//#include "SIMCOM_Lite.h"                           // Autobaud 28Oct20
 
 
 // ------- Assign Pins ----------------------------------------------------
@@ -102,14 +106,12 @@
 #define LED                 15       // MoteinoMEGA LED
 #define SD_CS               3        // D3 for SD card ChipSelect 
 #define hardSS              4
-#define Fona_Key            0        // turn FONA on/off
-#define Fona_RST            13       // FONA hard reset - toggle low for 100ms to reset
 #define FONA_RX             11       // communication w/ FONA if using software serial, hardware Serial1 is the same
 #define FONA_TX             10
-#define Fona_PS             25       // FONA Power Status - LOW when off, HIGH when on
 #define BattV               24       // A0, for calculating Vin from battery
 #define Mbatt               14       // Switches voltage divider on/off
-#define baudRate            57600    // John, 27-Mar-2019: Changed from 115200 to 57600 because when MCU at 8 MHz the sampling resolution is reduced
+#define CELL_RADIO_BAUD     57600    // SIM7070G baud rate
+#define baudRate            57600    // Serial baud rate
 #define maxNodes            8        // AIT, 14-Jan-2020: Changed from 10
 #define FONA_MSG_SIZE       1000     // AIT 06-Mar-2020: Changed to accomodate longer data strings using sensors IDs, was: 350   // max length for sending to Cloud
 #define pin_SD_OFF          1        // physical pin 41  D1
@@ -123,7 +125,7 @@
 
 // ------- Declare Variables -----------------------------------------------
 
-char VERSION[] = "V2022.02.11";
+char VERSION[] = "V2022.04.20";
 
 //-----*** Site/Gateway Identifier ***-----
 
@@ -274,20 +276,23 @@ byte   FolderDeleteCount = 0;                   // number of deleted folders
 byte   FailCount = 0;                           // delete fails
 String rootpath = "/";                          // indicates path
 
-//-----*** for SIM5320 ***-----
+//-----*** for SIM7070G ***-----
 
 //-- Comm with module
 
-char    response[100];                            // holder for responses from cellular module and network
+//char    response[100];                            // holder for responses from cellular module and network
 uint8_t answer;                                   // flag for matching expected response to actual response (sendATcommand())
-char    aux_str[FONA_MSG_SIZE];                   // buffer for compiling AT commands
-boolean fonaON = false;                           // flag for cellular module power status
+//char    aux_str[FONA_MSG_SIZE];                   // buffer for compiling AT commands
+//boolean fonaON = false;                           // flag for cellular module power status
+uint32_t uartBaud = CELL_RADIO_BAUD;
+uint8_t printCMRX = 0;                            //debug -- set to zero as default?
 
 //-- Network settings
 
-char  APN[] = "hologram";                         // cellular provider APN
-uint8_t gStatus;                                  // FONA GPRS status
+uint8_t gStatus;                                  // GPRS status
 uint8_t n;
+char hologramIP[] = "cloudsocket.hologram.io"; 
+char hologramPort[] = "9999"; 
 
 //-- for fieldSync
 
@@ -304,10 +309,7 @@ char    devicekey[9];                             // Hologram device key - autho
 RH_RF95 driverRFM95;                                 // Driver for the RFM95 radio
 ACReliableMessage LoRa(driverRFM95, GatewayID);        // LoRa radio manager
 
-HardwareSerial *fonaSerial = &Serial1;              // initialize serial port for comm to SIM5320
-Adafruit_FONA_3G fona = Adafruit_FONA_3G(Fona_RST); // initialize cellular module object
-
-//  SimCom *CellModem;  // autobaud lib 28Oct20
+SIMCOM_7070G cellRad;    //This is the blank initializer method but requires setting port, baud, and running commInit before use (some functionality such as turning off the modem power is available immediately)
 
 File myfile;    // initialize object for sensor data file
 File dump;      // initialize object for dump file
@@ -329,9 +331,9 @@ void setup()
   pinMode(SD_CS, OUTPUT);                         // set ChipSelect pin as output
   pinMode(hardSS, OUTPUT);
   digitalWrite(hardSS, HIGH);
-  pinMode(Fona_Key, OUTPUT);
-  digitalWrite(Fona_Key, HIGH);                   // set HIGH so toggle() works
-  pinMode(Fona_PS, INPUT);                        // input; reads HIGH or LOW
+//  pinMode(Fona_Key, OUTPUT);
+//  digitalWrite(Fona_Key, HIGH);                   // set HIGH so toggle() works
+//  pinMode(Fona_PS, INPUT);                        // input; reads HIGH or LOW
   pinMode(BattV, INPUT);                          // reads A0 to calculate SLA battery V
   pinMode(pin_solarVoltage, INPUT);
   pinMode(pin_solarShort, OUTPUT);
@@ -339,11 +341,17 @@ void setup()
 
   randomSeed(analogRead(4));                      // to randomize IP choices in NISTtime
 
-  if (digitalRead(Fona_PS) == HIGH) {
-    toggle();    // if Fona is on, turn it off
+  if (digitalRead(pin_SIMCOM_PWR_KEY) == HIGH) {
+    pwr_cellular(0);    // if cellular is on, turn it off
   }
 
   //--- Initialize
+  // SIM7070G
+  
+  cellRad.setRXEventHandler(&getModemRX);
+  cellRad.setPort(&Serial1);
+  cellRad.setBaudrate(uartBaud);
+  cellRad.commInit(); 
 
   // I2C
 
@@ -355,14 +363,12 @@ void setup()
   RTC.begin();
 
   debug = EEPROM.read(EEPROM_DEBUG);
-//  Serial.println(debug);
   if (debug != 1 && debug != 0){          // if nothing stored in EEPROM
     debug = true;
     EEPROM.update(EEPROM_DEBUG,debug);
   }  debug = EEPROM.read(EEPROM_DEBUG);
 
   forceRecv = EEPROM.read(EEPROM_FORCERECV);
-//  Serial.println(recvMode);
   if (forceRecv != 1 && forceRecv != 0){    // if nothing stored in EEPROM
     forceRecv = false;
     EEPROM.update(EEPROM_FORCERECV,forceRecv);
@@ -406,7 +412,7 @@ void setup()
   MainMenu();
   if (forceRecv) debug = false;
 
-  //--- Time sync in field
+ //--- Time sync in field
 
   delay(50);
   battV = calcbattV();        // check battery voltage
@@ -508,10 +514,10 @@ void loop()
       readClock();
       if (hrs == NISThr && mins == NISTmin) { // time to get time from NIST
         digitalWrite(LED, HIGH);
-        fonaOn();
+        pwr_cellular(1);
         delay(3000);
         timeSuccess = NISTtime();           // Get time from NIST, send to Nodes
-        fonaOff();
+        pwr_cellular(0);
         digitalWrite(LED, LOW);
         delay(1000);
       }
@@ -527,6 +533,7 @@ void loop()
       setAlarm2();
     }
   }   // end if Alarm 2
+ 
 }
 //======================================================================================
 //======================================================================================
@@ -666,19 +673,19 @@ void fieldSync() {
 
   //--- Step 1: Get time from NIST
 
-  fonaOn();
+  pwr_cellular(1);
   delay(3000);
-  if (digitalRead(Fona_PS) == HIGH && sim_detect) {
+  if (sim_detect) {
     timeSuccess = NISTtime();
-    fonaOff();
+    pwr_cellular(0);
     delay(5000);
     if (!timeSuccess && recvMode) {
       Serial.println("NIST clock update failed");
     }
     else if (!recvMode){
-      fonaOn();
+      pwr_cellular(1);
       sendNIST();         // 21-Apr-2020: send confirmation to Hologram/Slack
-      fonaOff();
+      pwr_cellular(0);
     } else if (timeSuccess && recvMode){
       Serial.println("NIST clock update successful");
     }
@@ -700,10 +707,10 @@ void fieldSync() {
 
   //--- Step 3: Send init message to Hologram
   if(!recvMode){
-    fonaOn();
+    pwr_cellular(1);
     delay(3000);
   
-    if (digitalRead(Fona_PS) == HIGH && gStatus == 1) { // if cell module on and connected to network
+    if (gStatus == 1) { // if cell module on and connected to network
       if (!sendInit()) {                                // send initialization message to Hologram, if fails, save to SD card for later upload
         delay(20);
         dump = SD.open(dumpfile, FILE_WRITE);           // only saves to dump file for upload, not to data file
@@ -714,7 +721,7 @@ void fieldSync() {
         delay(50);
         dump.close();
       } else {
-        fonaOff();
+        pwr_cellular(0);
         delay(1000);
       }
     }
@@ -836,10 +843,10 @@ void syncNodes(uint32_t time2wait) {  // 22-Jan-2020: add parameter time2wait
       unsynced.toCharArray(unsyncSend, unsyncLen);
       unsyncSend[unsyncLen - 1] = 0;
       delay(50);
-      sprintf(toSend, "%lu(%d) Gateway awake at %d/%d/%d %d:%d. Synced to Nodes: %s Missed Nodes: %s.", serNum, GatewayID, mnths, days, yrs, hrs, mins, syncSend, unsyncSend);
+      sprintf(toSend, "%lu(%d) Gateway awake at %d/%d/%d %d:%d. Synced to Nodes: %s Missed Nodes: %s.\0", serNum, GatewayID, mnths, days, yrs, hrs, mins, syncSend, unsyncSend);
       delay(100);
     } else {
-      sprintf(toSend, "%lu(%d) Gateway awake at %d/%d/%d %d:%d. Synced to Nodes: %s Missed Nodes: none.", serNum, GatewayID, mnths, days, yrs, hrs, mins, syncSend);
+      sprintf(toSend, "%lu(%d) Gateway awake at %d/%d/%d %d:%d. Synced to Nodes: %s Missed Nodes: none.\0", serNum, GatewayID, mnths, days, yrs, hrs, mins, syncSend);
       delay(50);
     }
     if(debug) Serial.println(toSend);
@@ -864,48 +871,48 @@ void syncNodes(uint32_t time2wait) {  // 22-Jan-2020: add parameter time2wait
 //---------- Send init confirmation to Hologram ----------------------------------
 
 boolean sendInit() {
-  char ctrlZ[2];
-  ctrlZ[0] = 0x1A;
-  ctrlZ[1] = 0x00;
-
-  memset(aux_str, 0, sizeof(aux_str));
-  delay(500);
+  if (debug){ 
+    Serial.println();
+    Serial.println("sendInit(): Sending init info to Hologram...");
+  }
   
-  Serial.println();
-  Serial.println("sendInit(): Sending init info to Hologram...");
-
   if (gStatus == 1) {
-
-    char tcpinit[] = "AT+CIPOPEN=0,\"TCP\",\"cloudsocket.hologram.io\",9999";   // Open TCP socket to Hologram (connect to Hologram)
-    if(debug) Serial.println(tcpinit);
-    answer = sendATcommand(tcpinit, "OK\r\n\r\n+CIPOPEN: 0,0", 10000);
-
-    char sendtcp[] = "AT+CIPSEND=0,";
-    if(debug){
-      Serial.println();
-      Serial.print(">> ");
-      Serial.println(sendtcp);
+    int init_len;
+    for (int i = 0; i < sizeof(toSend); i++){
+      if (toSend[i] == 0){
+        init_len = i;
+        break;
+      }
     }
-    answer = sendATcommand(sendtcp, ">", 10000);
 
-    sprintf(aux_str, "{\"k\":\"%s\",\"d\":\"%s\",\"t\":[\"%lu\",\"init\"]}%s\r\n\r\n", devicekey, toSend, serNum, ctrlZ); // compile json
+    char init_msg[init_len];
+    for (int i = 0; i < init_len; i++){
+      init_msg[i] = toSend[i];
+    }
+    
+    int msg_len = sizeof(devicekey) + init_len + 8 + 31;
+    char msg[msg_len];
+    sprintf(msg, "{\"k\":\"%s\",\"d\":\"%s\",\"t\":[\"%lu\",\"init\"]}\r", devicekey, init_msg, serNum); // compile json
     delay(60);
-    if(debug){
-      Serial.println();
-      Serial.print(">> ");
-      Serial.println(aux_str);
-    }
-    answer = sendATcommand(aux_str, "OK\r\n\r\n+CIPSEND:0,", 10000);  // send json to Hologram
+//    Serial.println(msg[msg_len - 3],DEC);
+//    Serial.println(msg[msg_len - 2],DEC);
+//    Serial.println(msg[msg_len - 1],DEC);
+    
+    
+    //--- Open TCP socket and send data
+    
+    uint16_t IPlen = sizeof(hologramIP);
+    uint16_t portLen = sizeof(hologramPort);
+    
+    answer = cellRad.openTCP(hologramIP,IPlen,hologramPort,portLen);
+    delay(60);
 
-    char closesocket[] = "AT+CIPCLOSE=0";
-    if(debug){
-      Serial.println();
-      Serial.print(">> ");
-      Serial.println(closesocket);
+    if (answer == 1) {
+      delay(60);
+      answer = cellRad.sendMsg(msg, msg_len, 10000);  // send Gateway data
+
+      answer = cellRad.closeTCP();                     // close TCP socket
     }
-    answer = sendATcommand(closesocket, "OK/r/n+CIPCLOSE:0,0", 5000); // close TCP socket (disconnect from Hologram)
-    Serial.println("Done");    
-    return true;
   }
   else {
     Serial.println("ERROR: Failed to connect to Hologram");
@@ -918,12 +925,7 @@ boolean sendInit() {
 //---------- Send message of successful NIST contact ----------------------------------
 
 void sendNIST() {
-  char ctrlZ[2];
-  ctrlZ[0] = 0x1A;
-  ctrlZ[1] = 0x00;
 
-  memset(aux_str, 0, sizeof(aux_str));
-  delay(500);
   if(debug){
     Serial.println();
     Serial.println("sendNIST(): Sending confirmation to Hologram...");
@@ -931,39 +933,34 @@ void sendNIST() {
 
   if (gStatus == 1) {
 
-    char tcpinit[] = "AT+CIPOPEN=0,\"TCP\",\"cloudsocket.hologram.io\",9999";    // open TCP socket
-    if(debug) Serial.println(tcpinit);
-    answer = sendATcommand(tcpinit, "OK\r\n\r\n+CIPOPEN: 0,0", 10000);
-
-    char sendtcp[] = "AT+CIPSEND=0,";           // request to send data of unknown length
-    if(debug){
-      Serial.println();
-      Serial.print(">> ");
-      Serial.println(sendtcp);
-    }
-    answer = sendATcommand(sendtcp, ">", 10000);
+    //--- Prepare message, Open TCP socket and send data
+    
+    uint16_t IPlen = sizeof(hologramIP);
+    uint16_t portLen = sizeof(hologramPort);
+        
+    delay(60);
 
     timestamp();
     byte len = Timestamp.length() + 1;
     char timeSend[len];
     Timestamp.toCharArray(timeSend, len); delay(20);
+    int nist_len = len + sizeof(devicekey) + 8 + 46;
+    char nist_send[nist_len];
 
-    sprintf(aux_str, "{\"k\":\"%s\",\"d\":\"Successful time update %s\",\"t\":[\"%lu\"]}%s\r\n\r\n", devicekey, timeSend, serNum, ctrlZ); // Compile message to send
+    sprintf(nist_send, "{\"k\":\"%s\",\"d\":\"Successful time update %s\",\"t\":[\"%lu\"]}\r", devicekey, timeSend, serNum); // Compile message to send
     delay(60);
-    if(debug){
-      Serial.println();
-      Serial.print(">> ");
-      Serial.println(aux_str);
-    }
-    answer = sendATcommand(aux_str, "OK\r\n\r\n+CIPSEND:0,", 10000);  // send message
+//    Serial.println(nist_send[nist_len - 3], DEC);
+//    Serial.println(nist_send[nist_len - 2], DEC);
+//    Serial.println(nist_send[nist_len - 1], DEC);
 
-    char closesocket[] = "AT+CIPCLOSE=0";
-    if(debug){
-      Serial.println();
-      Serial.print(">> ");
-      Serial.println(closesocket);
+    answer = cellRad.openTCP(hologramIP,IPlen,hologramPort,portLen);
+    
+    if (answer == 1) {
+      delay(60);
+      answer = cellRad.sendMsg(nist_send, nist_len, 10000);  // send Gateway data
+
+      answer = cellRad.closeTCP();                     // close TCP socket
     }
-    answer = sendATcommand(closesocket, "OK/r/n+CIPCLOSE:0,0", 5000); // close TCP socket
   }
   else {
     if(debug) Serial.println("ERROR: Failed to connect to Hologram");
@@ -1189,7 +1186,8 @@ void getData() {
 //---------- Get time from NIST server, update RTC -------------------------------------
 
 boolean NISTtime() {
-  if (sim_detect){
+
+  if (sim_detect){    
     unsigned long nistStart = millis(); //14May20
     Serial.println();
     Serial.println("NISTtime(): Getting time from NIST...");
@@ -1203,29 +1201,25 @@ boolean NISTtime() {
     for (byte u = 0; u < 12; u++) {
       ipaddr[u] = IPs[y][u];      // pick a random IP address of the four
     }
+    uint16_t IPsize = sizeof(ipaddr);
+    char port[] = "13";
+    uint16_t portSize = sizeof(port);
   
     if (gStatus == 1) {
-  
-      char tcpinit[] = "AT+CIPOPEN=0,\"TCP\",";
-      sprintf(aux_str, "%s\"%s\",13", tcpinit, ipaddr);
-      if(debug){
-        Serial.println();
-        Serial.print(">> ");
-        Serial.println(aux_str);
+      bool tcp_open = cellRad.openTCP(ipaddr,IPsize,port,portSize);
+      char getTime[] = "AT+CARECV=0,100\r";
+      uint16_t nistLen = cellRad.sendAT(getTime,500,3000);
+      char nistResp[nistLen];
+//      Serial.println(nistLen);
+      for(byte i = 0; i < nistLen; i++){
+         nistResp[i]=Serial1.read();
+         if (debug) Serial.print(nistResp[i]);
       }
-      answer = sendATcommand(aux_str, "OK\r\n\r\n+CIPOPEN: 0,0", 10000);
-  
-      char gettime[] = "AT+CIPRXGET=0";
-      if(debug){
-        Serial.println();
-        Serial.print(">> ");
-        Serial.println(gettime);
-      }
-      char commandTime[256];
-      sprintf(commandTime, "OK\r\n\r\nRECV FROM:%s UTC(NIST)", ipaddr);
-      sendATcommand(gettime, commandTime, 10000, response);
-      parseResponse(response);      // decode response from NIST and update clock
-  
+      delay(500);
+      parseResponse(nistResp);
+      delay(500);
+      cellRad.closeTCP();     
+      timeSuccess = true;
     } else {
       delay(500);
       if(debug) Serial.println("ERROR: No connection to network. Network time update unsuccessful.");
@@ -1366,61 +1360,40 @@ void gatewayInfo(){
   battV = calcbattV();                                // get Li-ion battery voltage
 
   float boxTemp = getBoxT();                          // get enclosure temperature
+  
+  //--- Convert floats to arrays
+  
+  String str_battV = String(battV);
+  uint8_t bvLen = str_battV.length() + 1;
+  char bv[bvLen];
+  str_battV.toCharArray(bv,bvLen);
+  bv[bvLen - 1] = 0;
 
-  // separate floats into whole number and decimal parts to be able to put decimal value in sprintf
+  String solarV = String(pvVoltage);
+  uint8_t pvLen = solarV.length() + 1;
+  char pv[pvLen];
+  solarV.toCharArray(pv,pvLen);
+  pv[pvLen -1] = 0;
 
+  String boxT = String(boxTemp);
+  uint8_t bTlen = boxT.length();
+  char bT[bTlen]; 
+  boxT.toCharArray(bT,bTlen);
+  bT[bTlen - 1] = 0;
+
+  String pvC = String(pvCurrent); 
+  uint8_t pvcLen = pvC.length() + 1;
+  char pvc[pvcLen];
+  pvC.toCharArray(pvc,pvcLen);
+  pvc[pvcLen - 1] = 0; 
   byte battV_whole = battV / 1;
   int battV_dec = (battV * 100);
   battV_dec = battV_dec % 100;
 
-  char bv_dec[3];
-  if (battV_dec < 10) {
-    bv_dec[0] = '0';
-    bv_dec[1] = battV_dec + 48;
-  } else {
-    bv_dec[0] = (battV_dec / 10) + 48;
-    bv_dec[1] = (battV_dec % 10) + 48;
-  }
-  bv_dec[2] = 0;
-
-  int boxTemp_whole = boxTemp / 1;   // using byte data type loses negative values!!! changed to int on 01/06/2021
-  int boxTemp_dec;                   // need to account for negative boxTemp values, boxTemp_dec should always be pos
-  if (boxTemp < 0) {
-    boxTemp_dec = -(boxTemp * 100);
-  } else {
-    boxTemp_dec = (boxTemp * 100);
-  }
-
-  boxTemp_dec = boxTemp_dec % 100;
-
-  char bt_dec[3];                   // to add leading 0 if needed
-  if (boxTemp_dec < 10) {
-    bt_dec[0] = '0';
-    bt_dec[1] = boxTemp_dec + 48;
-  } else {
-    bt_dec[0] = (boxTemp_dec / 10) + 48;
-    bt_dec[1] = (boxTemp_dec % 10) + 48;
-  }
-  bt_dec[2] = 0;
-
-  byte pvV_whole = pvVoltage / 1;
-  int pvV_dec = (pvVoltage * 100);
-  pvV_dec = pvV_dec % 100;
-
-  char pv_dec[3];
-  if (pvV_dec < 10) {
-    pv_dec[0] = '0';
-    pv_dec[1] = pvV_dec + 48;
-  } else {
-    pv_dec[0] = (pvV_dec / 10) + 48;
-    pv_dec[1] = (pvV_dec % 10) + 48;
-  }
-  pv_dec[2] = 0;
-
-  //  char gData[65];                           // array for Gateway data, compiled below
-  char gData[90];
-  sprintf(gData, "%s~%s~%lu~%d.%s~%d.%s~%d~%d.%s~%s", VERSION, projectID, serNum, battV_whole, bv_dec, boxTemp_whole, bt_dec, pvCurrent, pvV_whole, pv_dec, timeSave);
-  Serial.println(gData);
+  uint16_t gData_len = sizeof(VERSION) + sizeof(projectID) + 8 + bvLen + bTlen + pvcLen + pvLen + sizeof(timeSave);
+  char gData[gData_len];                           // array for Gateway data, compiled below
+  sprintf(gData, "%s~%s~%lu~%s~%s~%s~%s~%s", VERSION, projectID, serNum, bv, bT, pvc, pv, timeSave);
+  if (debug) Serial.println(gData);
   
   if (!SD.begin(SD_CS)) {}
   delay(20);
@@ -1446,14 +1419,11 @@ void sendDataSD() {
 
   if (!init1) {
     RTC.alarmInterrupt(ALARM_1, false);          // turn off alarm interrupts
-//    RTC.alarmInterrupt(ALARM_2, false);
   }
-  Serial.println("sendDataSD(): Sending data from SD...");    // Send node data
+  if (debug) Serial.println("sendDataSD(): Sending data from SD...");    // Send node data
 
   uint16_t pvCurrent = GetISolar();   // using John's code
   float pvVoltage = GetVSolar();
-
-  char aux_str2[FONA_MSG_SIZE];
 
   timestamp();                                        // compile timestamp String
   byte len1 = Timestamp.length() + 1;
@@ -1463,60 +1433,43 @@ void sendDataSD() {
   battV = calcbattV();                                // get Li-ion battery voltage
 
   float boxTemp = getBoxT();                          // get enclosure temperature
+  
 
-  // separate floats into whole number and decimal parts to be able to put decimal value in sprintf
+  //--- Convert floats to arrays
 
-  byte battV_whole = battV / 1;
-  int battV_dec = (battV * 100);
-  battV_dec = battV_dec % 100;
+  String str_battV = String(battV);
+  uint8_t bvLen = str_battV.length() + 1;
+  char bv[bvLen];
+  str_battV.toCharArray(bv,bvLen);
+  bv[bvLen - 1] = 0;
 
-  char bv_dec[3];
-  if (battV_dec < 10) {
-    bv_dec[0] = '0';
-    bv_dec[1] = battV_dec + 48;
-  } else {
-    bv_dec[0] = (battV_dec / 10) + 48;
-    bv_dec[1] = (battV_dec % 10) + 48;
-  }
-  bv_dec[2] = 0;
+  String solarV = String(pvVoltage);
+  uint8_t pvLen = solarV.length() + 1;
+  char pv[pvLen];
+  solarV.toCharArray(pv,pvLen);
+  pv[pvLen -1] = 0;
 
-  int boxTemp_whole = boxTemp / 1;   // using byte data type loses negative values!!! changed to int on 01/06/2021
-  int boxTemp_dec;                   // need to account for negative boxTemp values, boxTemp_dec should always be pos
-  if (boxTemp < 0) {
-    boxTemp_dec = -(boxTemp * 100);
-  } else {
-    boxTemp_dec = (boxTemp * 100);
-  }
+  String boxT = String(boxTemp);
+  uint8_t bTlen = boxT.length();
+  char bT[bTlen]; 
+  boxT.toCharArray(bT,bTlen);
+  bT[bTlen - 1] = 0;
 
-  boxTemp_dec = boxTemp_dec % 100;
+  String pvC = String(pvCurrent); 
+  uint8_t pvcLen = pvC.length() + 1;
+  char pvc[pvcLen];
+  pvC.toCharArray(pvc,pvcLen);
+  pvc[pvcLen - 1] = 0; 
 
-  char bt_dec[3];                   // to add leading 0 if needed
-  if (boxTemp_dec < 10) {
-    bt_dec[0] = '0';
-    bt_dec[1] = boxTemp_dec + 48;
-  } else {
-    bt_dec[0] = (boxTemp_dec / 10) + 48;
-    bt_dec[1] = (boxTemp_dec % 10) + 48;
-  }
-  bt_dec[2] = 0;
 
-  byte pvV_whole = pvVoltage / 1;
-  int pvV_dec = (pvVoltage * 100);
-  pvV_dec = pvV_dec % 100;
-
-  char pv_dec[3];
-  if (pvV_dec < 10) {
-    pv_dec[0] = '0';
-    pv_dec[1] = pvV_dec + 48;
-  } else {
-    pv_dec[0] = (pvV_dec / 10) + 48;
-    pv_dec[1] = (pvV_dec % 10) + 48;
-  }
-  pv_dec[2] = 0;
-
-  char gData[65];                           // array for Gateway data, compiled below
-  sprintf(gData, "%s~%s~%lu~%d.%s~%d.%s~%d~%d.%s~%s", VERSION, projectID, serNum, battV_whole, bv_dec, boxTemp_whole, bt_dec, pvCurrent, pvV_whole, pv_dec, timeSave);
-
+  //--- Compile gateway data string to save
+  
+  uint16_t gData_len = sizeof(VERSION) + sizeof(projectID) + 8 + bvLen + bTlen + pvcLen + pvLen + sizeof(timeSave);
+  char gData[gData_len];                           // array for Gateway data, compiled below
+  sprintf(gData, "%s~%s~%lu~%s~%s~%s~%s~%s", VERSION, projectID, serNum, bv, bT, pvc, pv, timeSave);
+  delay(50);
+//  Serial.println(gData);
+ 
   if (!SD.begin(SD_CS)) {}
   delay(20);
 
@@ -1524,215 +1477,202 @@ void sendDataSD() {
   delay(100);
   if (myfile) {
     myfile.print(gData);
-    myfile.print("~"); delay(50);
+    myfile.print("~"); delay(50);         // add 1 to gData_len
     myfile.close();
     delay(200);
   }
 
-  fonaOn();
-  delay(3000);
+  //--- Send data to Hologram
 
-  uint8_t rssi;
+  pwr_cellular(1);
+  delay(1000);
+
   int8_t dBm;
 
-  char ctrlZ[2];
-  ctrlZ[0] = 0x1A;
-  ctrlZ[1] = 0x00;
-
-  memset(aux_str, 0, sizeof(aux_str));
-  delay(50);
+  char c[1];
+  int pos = 0;
+  c[0] = 0;
+  int eof = 0;
 
   if (gStatus == 1 && !recvMode) {    // added 05Jan22, without recvMode part G still tries to connect
     boolean tcpSent = true;   // 12Jul21 want to know when send fails    
-    rssi = fona.getRSSI();     // 08Jan21
-    dBm = 0 - (113 - 2 * rssi);   // should be negative
-    //    Serial.print("RSSI: -");
-    //    Serial.println(dBm);
 
+    //--- Get and save RSSI
+    
+    dBm = cellRad.getRSSIdBm();
+
+    uint8_t div10 = dBm / -10;
+    uint8_t digits;
+    if (div10 > 9){
+      digits = 3;
+    } else if (div10 == 1){
+      digits = 2;
+    } else if (div10 == 0){
+      digits = 1;
+    }
+
+    char rs_dbm[digits + 2];    // add length to total length of msg
+    itoa(dBm,rs_dbm,10);
+    
     if (!SD.begin(SD_CS)) {}
     delay(20);
 
-    myfile = SD.open(datafile, FILE_WRITE);   // save power data to SD
+    myfile = SD.open(datafile, FILE_WRITE);   // save RSSI to SD
     delay(50);
     if (myfile) {
       myfile.println(dBm);
       myfile.close();
       delay(200);
     }
+       
+    //--- Compile gData message
+    
+    uint16_t gData_len = sizeof(VERSION) + sizeof(projectID) + 8 + bvLen + bTlen + pvcLen + pvLen + sizeof(timeSave);   // have to do it again, previous one is out of scope
+    char gData[gData_len];                           // array for Gateway data, compiled below
+    sprintf(gData, "%s~%s~%lu~%s~%s~%s~%s~%s", VERSION, projectID, serNum, bv, bT, pvc, pv, timeSave); delay(20);
+//    Serial.println(gData);
+       
+    uint16_t gMsgLen = gData_len + 1 + sizeof(rs_dbm) + 8 + 47; //48; <-- DON'T INCLUDE NULL IN MSG
+    char gMsg[gMsgLen];
+    sprintf(gMsg,"{\"k\":\"%s\",\"d\":\"%s~%s\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}\r",devicekey, gData, rs_dbm, serNum);
+//    Serial.println(gMsg);  
 
-    char c[1];
-    int pos = 0;
-    c[0] = 0;
-    int eof = 0;
 
-    char tcpinit[] = "AT+CIPOPEN=0,\"TCP\",\"cloudsocket.hologram.io\",9999";
-    if (debug) Serial.println(tcpinit);
-    answer = sendATcommand(tcpinit, "OK\r\n\r\n+CIPOPEN: 0,0", 10000);
+    //--- Open TCP socket and send data
+    
+    uint16_t IPlen = sizeof(hologramIP);
+    uint16_t portLen = sizeof(hologramPort);
+    
+    answer = cellRad.openTCP(hologramIP,IPlen,hologramPort,portLen);
+    delay(60);
 
     if (answer == 1) {
-      char sendtcp[] = "AT+CIPSEND=0,";   // unknown data string length
-      if(debug){
-        Serial.println();
-        Serial.print(">> ");
-        Serial.println(sendtcp);
-      }
-      answer = sendATcommand(sendtcp, ">", 10000);
-
-      // compile json with Gateway data to send to Hologram
-      sprintf(aux_str, "{\"k\":\"%s\",\"d\":\"%s~%s~%lu~%d.%s~%d.%s~%d~%d.%s~%s~%d\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}%s\r\n\r\n", devicekey, VERSION, projectID, serNum, battV_whole, bv_dec, boxTemp_whole, bt_dec, pvCurrent, pvV_whole, pv_dec, timeSave, dBm, serNum, ctrlZ);
-
       delay(60);
-      if(debug){
-        Serial.println();
-        Serial.print(">> ");
-        Serial.println(aux_str);
-      }
-      answer = sendATcommand(aux_str, "OK\r\n\r\n+CIPSEND: 0,", 5000);  // send Gateway data
-      memset(aux_str, 0, sizeof(aux_str));                              // reset aux_str array
+      answer = cellRad.sendMsg(gMsg, gMsgLen, 10000);  // send Gateway data
 
-      char closesocket[] = "AT+CIPCLOSE=0";
-      if(debug){
-        Serial.println();
-        Serial.print(">> ");
-        Serial.println(closesocket);
-      }
-      answer = sendATcommand(closesocket, "OK\r\n\r\n+CIPCLOSE: 0,", 5000);
+      answer = cellRad.closeTCP();                     // close TCP socket
+      
 
-      delay(20);
-      while (eof != -1) {
-        if (n == 5) {   //25Feb21: added n==5, 02Mar21: moved to if statement
-          if (!SD.exists(dumpfile)) {
-            Serial.println("ERROR: No Data in SD to Send");
-            delay(50);
-            return;
-          }
-          if (!(dump = SD.open(dumpfile, FILE_READ))) {
-            Serial.println("ERROR: File-open Failed");
-            delay(50);
-            return;
-          }
+    //--- Read and send node data from SD card
 
-          char dataToSend[FONA_MSG_SIZE];
-          memset(dataToSend, 0, sizeof(dataToSend));
-          /* Jumps to current position in file */
-          if (!dump.seek(pos)) {
-            eof = -1;
-            dump.close();
-            break;
-          }
-          eof = dump.read(c, 1);
-          if (eof == -1) {
-            dump.close();
-            break;
-          }
-          int ind = 0;
+    
+    while (eof != -1) {    
+      if (n == 5) {   //25Feb21: added n==5, 02Mar21: moved to if statement
+        if (!SD.exists(dumpfile)) {
+          if (debug) Serial.println("ERROR: No Data in SD to Send");
           delay(50);
-
-          while (eof != -1 && c[0] != '\n' && c[0] != 0) {    // populate array with row of data from DUMP file
-            if((c[0] > 31 && c[0] < 127) || c[0] == 13 || c[0] == 10) dataToSend[ind++] = c[0];   // 13Jul21: don't send characters that Hologram will reject
-            if ((eof = dump.read(c, 1)) == -1)
-              break;
-          }
-
-          dataToSend[ind - 1] = '\0'; // REMOVE CARRIAGE RETURN AT END OF ARRAY
+          return;
+        }
+        if (!(dump = SD.open(dumpfile, FILE_READ))) {
+          if (debug) Serial.println("ERROR: File-open Failed");
           delay(50);
-          if (c[0] == '\n' || c[0] == '\r')
-            pos += ind + 1;
-          if (c[0] == 0)
-            eof = -1;
-          if(debug){ 
-            Serial.println("Data to send from SD:");
-            Serial.println("-------Start-------");
-            delay(50);
-            Serial.print((int)(dataToSend[0]));
-            Serial.print(" : ");
-            Serial.println(eof);
-            Serial.println("--------End--------");
-            delay(100);
-          }
+          return;
+        }
 
-          // Do not send anything if blank
- 
-//          char successfulSend[] = "\r\nOK\r\n\r\n+CIPSEND: 0,";
-
-          if (dataToSend[0] != 0 && dataToSend[0] != '\n' && dataToSend[0] != '\r') {
-            //          for (byte i = 1; i <= 3; i++){                                            // try to send data max 3 times, removed 27Jan21: takes too long and interferes with faster interval
-//            if (tcpSent == false) {
-              answer = sendATcommand(tcpinit, "OK\r\n\r\n+CIPOPEN: 0,0", 10000);    // open TCP socket
-              memset(aux_str, 0, sizeof(aux_str));
-
-              if (answer == 1) {
-                char sendtcp[] = "AT+CIPSEND=0,";                                     // unknown data string length
-                if(debug){ 
-                  Serial.println();
-                  Serial.print(">> ");
-                  Serial.println(sendtcp);
-                }
-                answer = sendATcommand(sendtcp, ">", 5000);                           // send request to send data
-
-                // compile data into a json string
-                sprintf(aux_str2, "{\"k\":\"%s\",\"d\":\"%s\",\"t\":[\"%lu\",\"NODE_DATA\"]}%s\r\n\r\n", devicekey, dataToSend, serNum, ctrlZ);
-                delay(60);
-                if(debug){
-                  Serial.println();
-                  Serial.print(">> ");
-                  Serial.println(aux_str2);
-                }
-                answer = sendATcommand(aux_str2, "OK\r\n\r\n+CIPSEND: 0,", 5000);     // send data
-//                memset(aux_str2, 0, sizeof(aux_str));                                 // reset array for next line of data
-//                Serial.print("answer = ");
-//                Serial.println(answer);
-                if(answer == 0){ 
-                  tcpSent = false;
-                  Serial.println("Send to Hologram failed");
-                }
-                
-                char closesocket[] = "AT+CIPCLOSE=0";
-                if(debug){
-                  Serial.println();
-                  Serial.print(">> ");
-                  Serial.println(closesocket);
-                }
-                answer = sendATcommand(closesocket, "OK\r\n\r\n+CIPCLOSE: 0,", 5000);
-
-              } else {
-                if(debug) Serial.println("ERROR: Failed to connect to Hologram");
-              }
-//            }  // end if tcpSent == false
-//            else {}  // move to next attempt
-            //          } // end for loop that tries to send 3 times
-          }   // end if dataToSend[0] != 0
-
-          c[0] = 0;
+        char dataToSend[FONA_MSG_SIZE];
+        memset(dataToSend, 0, sizeof(dataToSend));
+        
+        // Jumps to current position in file 
+        if (!dump.seek(pos)) {
+          eof = -1;
           dump.close();
-          delay(100);
-
-        } else {
           break;
         }
-        n = fona.getNetworkStatus(); // 22Feb21
-      }  // end while !eof loop
+        eof = dump.read(c, 1);
+        if (eof == -1) {
+          dump.close();
+          break;
+        }
+        int ind = 0;
+        delay(50);
+        
+        int len = 0;      // calculate exact length of data string
 
-      delay(100);
+        while (eof != -1 && c[0] != '\n' && c[0] != 0) {    // populate array with row of data from DUMP file
+          if((c[0] > 31 && c[0] < 127) || c[0] == 13 || c[0] == 10){            // 13Jul21: don't send characters that Hologram will reject
+            dataToSend[ind++] = c[0];
+            if (c[0] == '\r'){     
+              len = ind - 1 ;
+            }
+          }
+          if ((eof = dump.read(c, 1)) == -1) break;  
+        }
+
+        delay(50);
+        if (c[0] == '\n' || c[0] == '\r')     // not sure if this is throwing things off 
+          pos += ind + 1;
+        if (c[0] == 0)
+          eof = -1;
+        if(debug){ 
+          Serial.println("Data to send from SD:");
+          Serial.println("-------Start-------");
+          delay(50);
+          Serial.print((int)(dataToSend[0]));
+          Serial.print(" : ");
+          Serial.println(eof);
+          Serial.println("--------End--------");
+          delay(100);
+        }
+
+        // Do not send anything if blank
+        //--- Compile data into a json string
+        
+            char Nmsg[len+1];         // new array of correct length
+
+            for (uint16_t i = 0; i < len; i++){
+              Nmsg[i] = dataToSend[i];
+//              Serial.print(Nmsg[i]);
+            }
+            Nmsg[len] = 0;
+
+            uint16_t nMsgLen = len + 8 + 44; // <-- DON'T INCLUDE NULL IN MSG
+
+        if (dataToSend[0] != 0 && dataToSend[0] != '\n' && dataToSend[0] != '\r') {
+
+          answer = cellRad.openTCP(hologramIP,IPlen,hologramPort,portLen);          // open TCP socket
+          if (answer == 1) {
+
+            char nMsg[nMsgLen];
+            sprintf(nMsg,"{\"k\":\"%s\",\"d\":\"%s\",\"t\":[\"%lu\",\"NODE_DATA\"]}\r", devicekey, Nmsg, serNum);
+
+            answer = cellRad.sendMsg(nMsg, nMsgLen, 5000);
+            answer = cellRad.closeTCP();
+ 
+          } else {
+            if(debug) Serial.println("ERROR: Failed to connect to Hologram");
+          }
+
+        }   // end if dataToSend[0] != 0
+
+        c[0] = 0;
+        dump.close();
+        delay(100);
+
+      } else {
+        break;
+      }
+      n = cellRad.getNetworkStatus();   // check if we're still connected
+
+    }  // end while !eof loop
+
+    delay(100);
       
       if (eof == -1 && tcpSent == true) {    // 13Apr21: only delete dump file if successfully sent
         if (SD.remove(dumpfile)){
          if(debug) Serial.println("File Cleared");
         } else {
           if(debug) Serial.println("File Clear Failed");
-          delay(50);
-          Serial.println("Done");
         }
       } else if (tcpSent == false){
         if(debug) Serial.println("Upload failed. File not cleared.");
       }
     } else {
-      Serial.println("Failed to connect to Hologram");
+      if (debug) Serial.println("Failed to connect to Hologram");
     }
   } // end if gStatus == 1
 
   delay(3000);
-  fonaOff();
+  pwr_cellular(0);
 
   if (recvMode) gatewayInfo();  // 05Jan22 save gateway info to SD if G not connected to network
 
@@ -1753,138 +1693,111 @@ void sendDataSD() {
     RTC.alarmInterrupt(ALARM_2, true);
   }
 
+  if (debug) Serial.println("Done sendDataSD()");
+  
 }
 
 //--------------- from array if SD fails
 
 void sendDataArray() {
 
-  //unsigned int pvCurrent = getSolarCurrent();
+  timestamp();                                        // compile timestamp String
+  byte len1 = Timestamp.length() + 1;
+  char timeSave[len1];
+  Timestamp.toCharArray(timeSave, len1); delay(20);   // convert String to char array
+
   uint16_t pvCurrent = GetISolar();   // using John's code
   float pvVoltage = GetVSolar();
-
-  //  float pvVoltage = getSolarVoltage();
-  //  unsigned int pvVoltageSend = pvVoltage * 1000; // convert float (V) to int (mV)
   float boxTemp = getBoxT();    // added 14-Feb-2020
 
-  char aux_str2[FONA_MSG_SIZE];
+    //--- Convert floats to arrays
 
-  battV = calcbattV();                            // get Li-ion battery voltage
-  byte battV_whole = battV / 1;
-  int battV_dec = (battV * 100);
-  battV_dec = battV_dec % 100;
+  String str_battV = String(battV);
+  uint8_t bvLen = str_battV.length() + 1;
+  char bv[bvLen];
+  str_battV.toCharArray(bv,bvLen);
+  bv[bvLen - 1] = 0;
 
-  char bv_dec[3];
-  if (battV_dec < 10) {
-    bv_dec[0] = '0';
-    bv_dec[1] = battV_dec + 48;
-  } else {
-    bv_dec[0] = (battV_dec / 10) + 48;
-    bv_dec[1] = (battV_dec % 10) + 48;
-  }
-  bv_dec[2] = 0;
+  String solarV = String(pvVoltage);
+  uint8_t pvLen = solarV.length() + 1;
+  char pv[pvLen];
+  solarV.toCharArray(pv,pvLen);
+  pv[pvLen -1] = 0;
 
-  int boxTemp_whole = boxTemp / 1;   // using byte data type loses negative values!!! changed to int on 01/06/2021
-  int boxTemp_dec;                   // need to account for negative boxTemp values, boxTemp_dec should always be pos
-  if (boxTemp < 0) {
-    boxTemp_dec = -(boxTemp * 100);
-  } else {
-    boxTemp_dec = (boxTemp * 100);
-  }
+  String boxT = String(boxTemp);
+  uint8_t bTlen = boxT.length();
+  char bT[bTlen]; 
+  boxT.toCharArray(bT,bTlen);
+  bT[bTlen - 1] = 0;
 
-  boxTemp_dec = boxTemp_dec % 100;
+  String pvC = String(pvCurrent); 
+  uint8_t pvcLen = pvC.length() + 1;
+  char pvc[pvcLen];
+  pvC.toCharArray(pvc,pvcLen);
+  pvc[pvcLen - 1] = 0; 
 
-  char bt_dec[3];
-  if (boxTemp_dec < 10) {
-    bt_dec[0] = '0';
-    bt_dec[1] = boxTemp_dec + 48;
-  } else {
-    bt_dec[0] = (boxTemp_dec / 10) + 48;
-    bt_dec[1] = (boxTemp_dec % 10) + 48;
-  }
-  bt_dec[2] = 0;
+  int8_t dBm;
 
-  byte pvV_whole = pvVoltage / 1;
-  int pvV_dec = (pvVoltage * 100);
-  pvV_dec = pvV_dec % 100;
-
-  char pv_dec[3];
-  if (pvV_dec < 10) {
-    pv_dec[0] = '0';
-    pv_dec[1] = pvV_dec + 48;
-  } else {
-    pv_dec[0] = (pvV_dec / 10) + 48;
-    pv_dec[1] = (pvV_dec % 10) + 48;
-  }
-  pv_dec[2] = 0;
-
-  char ctrlZ[2];
-  ctrlZ[0] = 0x1A;
-  ctrlZ[1] = 0x00;
-
-  memset(aux_str, 0, sizeof(aux_str));
-  delay(50);
-  uint8_t rssi;
-  uint8_t dBm;
-
-  fonaOn();
+  pwr_cellular(1);
   delay(3000);
 
   if (gStatus == 1 && !recvMode) {
-    Serial.println("sendDataArray(): Sending data from array...");
-    rssi = fona.getRSSI();     // 08Jan21
-    dBm = 113 - 2 * rssi;
+    if (debug) Serial.println("sendDataArray(): Sending data from array...");
+    
+    //--- Get RSSI
+    
+    dBm = cellRad.getRSSIdBm();
 
-    // Send node data
-    char tcpinit[] = "AT+CIPOPEN=0,\"TCP\",\"cloudsocket.hologram.io\",9999";
-    answer = sendATcommand(tcpinit, "OK\r\n\r\n+CIPOPEN: 0,0", 10000); // needs longer timeout?
-    memset(aux_str, 0, sizeof(aux_str));
+    uint8_t div10 = dBm / -10;
+    uint8_t digits;
+    if (div10 > 9){
+      digits = 3;
+    } else if (div10 == 1){
+      digits = 2;
+    } else if (div10 == 0){
+      digits = 1;
+    }
+
+    char rs_dbm[digits + 2];    // add length to total length of msg
+    itoa(dBm,rs_dbm,10);
+   
+    //--- Compile gData message
+    
+    uint16_t gData_len = sizeof(VERSION) + sizeof(projectID) + 8 + bvLen + bTlen + pvcLen + pvLen + sizeof(timeSave);   // have to do it again, previous one is out of scope
+    char gData[gData_len];                           // array for Gateway data, compiled below
+    sprintf(gData, "%s~%s~%lu~%s~%s~%s~%s~%s", VERSION, projectID, serNum, bv, bT, pvc, pv, timeSave); delay(20);
+       
+    uint16_t gMsgLen = gData_len + 1 + sizeof(rs_dbm) + 8 + 46; //47; //48; <-- DON'T INCLUDE NULL IN MSG
+    char gMsg[gMsgLen];
+    sprintf(gMsg,"{\"k\":\"%s\",\"d\":\"%s~%s\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}\r",devicekey, gData, rs_dbm, serNum);
+    delay(60);
+
+    //--- Open TCP socket and send data
+    
+    uint16_t IPlen = sizeof(hologramIP);
+    uint16_t portLen = sizeof(hologramPort);
+    
+    answer = cellRad.openTCP(hologramIP,IPlen,hologramPort,portLen);
 
     if (answer == 1) {
-
-      char sendtcp[] = "AT+CIPSEND=0,";   // unknown data string length
-      if(debug){
-        Serial.println();
-        Serial.print(">> ");
-        Serial.println(sendtcp);
-      }
-      answer = sendATcommand(sendtcp, ">", 10000);
-
-      timestamp();
-      byte len1 = Timestamp.length() + 1;
-      char timeSave[len1];
-      Timestamp.toCharArray(timeSave, len1); delay(20);
-
-      sprintf(aux_str, "{\"k\":\"%s\",\"d\":\"%s~%s~%lu~%d.%s~%d.%s~%d~%d.%s~%s~-%d\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}%s\r\n\r\n", devicekey, VERSION, projectID, serNum, battV_whole, bv_dec, boxTemp_whole, bt_dec, pvCurrent, pvV_whole, pv_dec, timeSave, dBm, serNum, ctrlZ);
-  
       delay(60);
-      if(debug) {
-        Serial.println();
-        Serial.print(">> ");
-        Serial.println(aux_str);
-      }
-      answer = sendATcommand(aux_str, "OK\r\n\r\n+CIPSEND: 0,", 5000);
+      answer = cellRad.sendMsg(gMsg, gMsgLen, 10000);  // send Gateway data
 
-      char closesocket[] = "AT+CIPCLOSE=0";
-      if(debug) {
-        Serial.println();
-        Serial.print(">> ");
-        Serial.println(closesocket);
-      }
-      answer = sendATcommand(closesocket, "OK\r\n\r\n+CIPCLOSE: 0,", 5000);
+      answer = cellRad.closeTCP();                     // close TCP socket
 
+    //--- Send node data
+    
       for (byte index = 0; index < numNodes; index++) {
 
         // Do not send anything if blank
         boolean tcpSent = false;
-        char successfulSend[] = "\r\nOK\r\n\r\n+CIPSEND: 0,";
-
+ 
         if (nodeData[index][0] != 0) {
           int len = nodeData[index].length() + 1;
-          if(debug) {
-            Serial.print("len = ");
-            Serial.println(len);
-          }
+//          if(debug) {
+//            Serial.print("len = ");
+//            Serial.println(len);
+//          }
           char dataToSend[len];
           nodeData[index].toCharArray(dataToSend, len);
           if(debug) {
@@ -1894,38 +1807,25 @@ void sendDataArray() {
 
         for (byte i = 1; i <= 3; i++){    // try to send data max 3 times
           if (tcpSent == false) {
-            //              char tcpinit[] = "AT+CIPOPEN=0,\"TCP\",";
-            //              sprintf(aux_str,"%s\"%s\",9999",tcpinit,ipaddr);
+            
+            // need to calculate length of full json msg
 
-            char tcpinit[] = "AT+CIPOPEN=0,\"TCP\",\"cloudsocket.hologram.io\",9999";
-            answer = sendATcommand(tcpinit, "OK\r\n\r\n+CIPOPEN: 0,0", 10000); // needs longer timeout?
-            if(debug) {
-              Serial.println();
-              Serial.print(">> ");
-              Serial.println(aux_str);
-            }
-            memset(aux_str, 0, sizeof(aux_str));
-
-            char sendtcp[] = "AT+CIPSEND=0,";   // unknown data string length --> WORKS! COMMA IS NECESSARY
-            if(debug) {
-              Serial.println();
-              Serial.print(">> ");
-              Serial.println(sendtcp);
-            }
-            answer = sendATcommand(sendtcp, ">", 5000);
-
-            sprintf(aux_str2, "{\"k\":\"%s\",\"d\":\"%s\",\"t\":[\"%lu\",\"NODE_DATA\"]}%s\r\n\r\n", devicekey, dataToSend, serNum, ctrlZ);
+            uint16_t json_len = len + 8 + 44; //45;
+            char n_msg[json_len];
+            
+            sprintf(n_msg, "{\"k\":\"%s\",\"d\":\"%s\",\"t\":[\"%lu\",\"NODE_DATA\"]}\r", devicekey, dataToSend, serNum);
             delay(60);
             if(debug) {
-              Serial.println();
-              Serial.print(">> ");
-              Serial.println(aux_str2);
+              Serial.println(n_msg);
             }
-//            answer = sendATcommand(aux_str2, "OK\r\n\r\n+CIPSEND: 0,", 5000);
-            answer = sendATcommand(aux_str2, successfulSend, 5000);
-            if(debug) {
-              Serial.print("answer = ");
-              Serial.println(answer);
+
+            answer = cellRad.openTCP(hologramIP,IPlen,hologramPort,portLen);
+
+            if (answer == 1){
+              delay(60);
+              answer = cellRad.sendMsg(n_msg, json_len, 10000);  // send node data
+
+              answer = cellRad.closeTCP();                     // close TCP socket
             }
 
             if(answer == 0){ 
@@ -1934,15 +1834,6 @@ void sendDataArray() {
             } else {
               tcpSent = true;
             }
-
-            if(debug) {
-              Serial.print("tcpSent = ");
-              Serial.println(tcpSent);
-              Serial.println();
-              Serial.print(">> ");
-              Serial.println(closesocket);
-            }
-            answer = sendATcommand(closesocket, "OK\r\n\r\n+CIPCLOSE: 0,", 5000);
 
           }  // end if tcpSent == false
 
@@ -1958,191 +1849,86 @@ void sendDataArray() {
 
       delay(100);
     } else {
-      Serial.println("Failed to connect to Hologram");
+      if (debug) Serial.println("Failed to connect to Hologram");
     }
   } // end if gStatus == 1
 
   delay(3000);
-  fonaOff();
+  pwr_cellular(0);
 
-  Serial.println("Done");
-
-}
-
-//======================================================================================
-
-//--------------- Turn Fona on or off --------------------------------------------------
-
-void toggle() {
-
-  digitalWrite(Fona_Key, LOW);
-  delay(3000);
-  digitalWrite(Fona_Key, HIGH);
+  if (debug) Serial.println("Done");
 
 }
 
-//======================================================================================
-
-//--------------- Initialize Fona (SIM5320) ------------------------------------------------------
-void fonaOn() {
-  if(debug) {
-    Serial.println();
-    Serial.println("fonaON(): Turning FONA on...");
-  }
-  unsigned long pTimeout = millis();// 15-Jan-2020: + 10000;
-
-  while ((digitalRead(Fona_PS) == LOW) && ((millis() - pTimeout) < 10000)) { 
-    toggle();
-    delay(2000);
-  }
-
-  if (digitalRead(Fona_PS) == HIGH) {
-    fonaSerial->begin(4800);
-
-    if (! fona.begin(*fonaSerial)) { // turn on cell module
-      if (! fona.begin(*fonaSerial)) {    // try again
-      }
-      else {
-        fonaON = true;
-      }
-    }
-    else { // all is good
-      fonaON = true;
-    }
-
-    delay(3000);
-
-    // check for SIM
-    char ccid[21];
-    fona.getSIMCCID(ccid); delay(10);
-    if (ccid[0] == 'E'){
-      sim_detect = false;
-      recvMode = true;
-      if (debug){
-        Serial.println("SIM not detected");
-      }
-    } else {
-      if (debug){
-        Serial.println(ccid);
-        Serial.println("SIM detected");
-      } 
-      sim_detect = true;     
-    }
-
-    if (init1 && sim_detect) {
-      if(debug) Serial.println("Changing timeouts...");
-      changeTimeout();
-      //  checkTimeout();
-    }
-    delay(5000);
-    if (sim_detect) GPRS_on();
-  }
-  else {
-    fonaON = false;
-    if(debug) Serial.println("ERROR: FONA failed to turn on");
-  }
-
-}
 
 //======================================================================================
 
-//--------------- Turn Fona off --------------------------------------------------------
+//--------------- Initialize SIM7070G ------------------------------------------------------
+bool pwr_cellular(bool onoff) {
+  bool cellOn;
 
-void fonaOff() {
-  if(sim_detect){
-    GPRS_off();
-    delay(500);
-    if (debug){
-      Serial.println();
-      Serial.println("fonaOff(): Turning FONA off...");
-    }
-    fonaSerial ->end();
-    delay(1000);
-  }
-
-}
-
-//======================================================================================
-
-//--------------- Establish GPRS connection --------------------------------------------
-
-boolean startGPRS(boolean onoff) {
-
-  n = fona.getNetworkStatus();  // 22Feb21: make n a global variable instead of local
-  if (debug) printNetStat();
-
-  memset(aux_str, 0, sizeof(aux_str));
-
-  if (onoff) {
-
-    char AT1[] = "AT+CGATT=1";
-    if(debug) {
-      Serial.println();
-      Serial.print(">> ");
-      Serial.println(AT1);
-    }
-    answer = sendATcommand(AT1, "OK", 30000);  // was 30000
-
-    char AT2[] = "AT+CGSOCKCONT=1";
-    sprintf(aux_str, "%s,\"IP\",\"%s\"", AT2, APN);
-    delay(50);
-    if(debug) {
-      Serial.println();
-      Serial.print(">> ");
-      Serial.println(aux_str);
-    }
-    answer = sendATcommand(aux_str, "OK", 20000); // was 30000
-
-    char start2TCP[] = "AT+CSOCKSETPN=1";
-    if(debug) {
-      Serial.println();
-      Serial.print(">> ");
-      Serial.println(start2TCP);
-    } 
-    answer = sendATcommand(start2TCP, "OK", 20000);
-
-    char AT3[] = "AT+CIPMODE=0";
-    if(debug) {
-      Serial.println();
-      Serial.print(">> ");
-      Serial.println(AT3);
-    }
-    answer = sendATcommand(AT3, "OK", 20000); // was 30000
-
-    char AT4[] = "AT+NETOPEN";
-    if(debug) {
-      Serial.println();
-      Serial.print(">> ");
-      Serial.println(AT4);
-    }
-    answer = sendATcommand(AT4,"\r\nOK\r\n\r\n+NETOPEN: 0\r\n", 120000); // 21Jun21: match default
-    if(debug) Serial.println(answer);
-    n = fona.getGPRSNetworkStatus();  // 22Feb21: make n a global variable instead of local
-    if(debug) printNetStat();
-
-    uint8_t gprsState = fona.GPRSstate();
-    //    Serial.println(gprsState);
-
-    if (n == 5 && gprsState == 1) {
-      return true;
-    } else {
-      return false;
-    }
-
-    delay(50);
-
+  // check current power status
+  
+  if (digitalRead(pin_SIMCOM_PWR_KEY) == LOW){
+    cellOn = false;
   } else {
-
-    char AT5[] = "AT+NETCLOSE";
-    if(debug) {
-      Serial.println();
-      Serial.print(">> ");
-      Serial.println(AT5);
-    }
-    answer = sendATcommand(AT5, "Network closed", 20000);
-    return false;
-
+    cellOn = true;
   }
+//  Serial.println(digitalRead(pin_SIMCOM_PWR_STATUS));
+//  Serial.println(digitalRead(pin_SIMCOM_PWR_KEY));
+//  Serial.println(cellOn);
+
+  // compare to onoff input, execute pwr toggle accordingly
+
+  if (cellOn == true && onoff == 0){                        // cell on, want to turn off
+    if (debug){
+      Serial.print("Turning cellular radio OFF...");
+    }    
+    if (cellRad.powerOff(true)){                            // turn radio off
+      if (debug)Serial.println("Success!");
+      cellOn = false;
+    } else {
+      if (debug) Serial.println("Failure!");
+    }    
+  } 
+  else if (cellOn == false && onoff == 1){                  // cell off, want to turn on
+    if (debug){
+      Serial.print("Turning cellular radio ON...");
+    }
+    if (cellRad.begin()){                                   // turn radio on
+      if (debug)Serial.println("Success!");
+      cellOn = true;
+      cellRad.echo(1);                                      // turn off cellular command line echo
+    } else {
+      if (debug) Serial.println("Failure!");
+    }      
+  } 
+  else {
+    // do nothing, pwr state matches onoff input
+  }
+  
+  if(cellOn){    
+//    delay(200);
+    if(cellRad.detectSIM()){                                // check for SIM
+      sim_detect = true;                                    // all good, continue normal function  
+      if (debug) Serial.println("SIM detected");    
+      n = cellRad.getNetworkStatus();
+      cellRad.closeTCP();
+      cellRad.closeIP();
+      gStatus = cellRad.startIP();                          // start internet protocol  
+      if (gStatus == 1){
+        recvMode = false;
+      } else {
+        recvMode = true;
+      }
+    } else {
+      sim_detect = false;                                   // SIM missing, go to Receiver mode
+      recvMode = true;
+      if (debug) Serial.println("SIM not detected");
+    }
+  }
+  return cellOn;
+
 }
 
 void printNetStat() {
@@ -2156,162 +1942,6 @@ void printNetStat() {
   if (n == 4) Serial.println(F("Unknown"));
   if (n == 5) Serial.println(F("Registered roaming"));
   delay(100);
-}
-
-//======================================================================================
-
-//--------------- Establish GPRS connection --------------------------------------------
-
-void GPRS_on() {
-  if(debug) {
-    Serial.println();
-    Serial.println("GPRS_on(): Starting GPRS...");
-  }
-
-  if (!startGPRS(true)) {
-    Serial.println(F("ERROR: GPRS failed to turn on"));
-    gStatus = 0;
-    recvMode = true;
-  }
-  else {
-    Serial.println(F("GPRS on"));
-    gStatus = 1;
-    recvMode = false;
-    //    getNetworkStatFull();  // 23Feb21
-  }
-  if (forceRecv) recvMode = true;
-  delay(3000);
-}
-
-//======================================================================================
-
-//--------------- Turn off GPRS connection ---------------------------------------------
-
-void GPRS_off() {
-  if(debug) {
-    Serial.println();
-    Serial.println("GPRS_off(): Turning off GPRS...");
-  }
-  
-  char AT5[] = "AT+NETCLOSE";
-  if(debug) {
-    Serial.println(AT5);
-    Serial.println();
-    Serial.print(">> ");
-  }
-  answer = sendATcommand(AT5, "Network closed", 20000);
-  delay(100);
-}
-
-//======================================================================================
-
-//--------------- Send AT Command ------------------------------------------------------
-
-int8_t sendATcommand(char* ATcommand, char* expected_answer1, unsigned int timeout)
-{
-
-  uint8_t x = 0,  answer = 0;
-  unsigned long previous;
-
-  memset(response, '\0', 100);    // Initialize the string
-
-  delay(100);
-
-  while ( Serial1.available() > 0) Serial1.read();   // Clean the input buffer
-
-  Serial1.println(ATcommand);    // Send the AT command
-
-  x = 0;
-  previous = millis();
-
-  // this loop waits for the answer
-  do {
-
-    if (Serial1.available() != 0) {
-      if (x == 100)
-      {
-        strncpy(response, response + 1, 99);
-        response[99] = Serial1.read();
-      }
-      else
-      {
-        response[x] = Serial1.read();
-        //        Serial.print(response[x]);
-        x++;
-      }
-      // check if the desired answer is in the response of the module
-      if (strstr(response, expected_answer1) != NULL || isSubstring(expected_answer1, response))
-        //if (isSubstring(expected_answer1, response))
-      {
-        answer = 1;
-      }
-      //      Serial.println(answer);
-    }
-    // Waits for the asnwer with time out
-  }
-
-  while ((answer == 0) && ((millis() - previous) < timeout));
-
-  delay(50);
-  if(debug) Serial.println(response);
-  delay(50);
-  
-  return answer;
-}
-
-int8_t sendATcommand(char* ATcommand, char* expected_answer1, unsigned int timeout, char result[100])
-{
-
-  uint8_t x = 0,  answer = 0;
-  char response[100];
-  unsigned long previous;
-
-  memset(response, '\0', 100);    // Initialize the string
-
-  delay(100);
-
-  while ( Serial1.available() > 0) Serial1.read();   // Clean the input buffer
-
-  if(debug) Serial1.println(ATcommand);    // Send the AT command
-
-  x = 0;
-  previous = millis();
-
-  // this loop waits for the answer
-  do {
-
-    if (Serial1.available() != 0) {
-      if (x == 100)
-      {
-        strncpy(response, response + 1, 99);
-        response[99] = Serial1.read();
-      }
-      else
-      {
-        response[x] = Serial1.read();
-        //        Serial.print(response[x]);
-        x++;
-      }
-      // check if the desired answer is in the response of the module
-
-      if (strstr(response, expected_answer1) != NULL)
-      {
-        answer = 1;
-      }
-    }
-    // Waits for the asnwer with time out
-  }
-
-  while ((answer == 0) && ((millis() - previous) < timeout));
-
-  if(debug) Serial.println(response);
-  delay(50);
-  
-  for (int i = 0; i < 100; i++){
-    result[i] = response[i];
-  }
-  return answer;
-
 }
 
 bool isSubstring(char substr[100], char str[100]) {
@@ -2328,25 +1958,7 @@ bool isSubstring(char substr[100], char str[100]) {
 
 //--------------- Solar panel ---------------------------------------------
 
-/*// float getMOSFETresistance(float temp, float voltSD) {
-  //   //NOTE: This is based on datasheet graphs but has empirical compensation as well
-  //   //returns SSM3K376R MOSFET resistance (in Ohms) as a function of temperature and [pre]source-drain voltage (assuming 3-volt gate-source voltage)
-
-  //   float tempCompensation = (float)((0.2053 * temp + 42.158) / 1000.0);
-  //   float adjusted;
-  //   if (voltSD > 0.10) {
-  //     adjusted = tempCompensation + (-1.122 * voltSD * voltSD + 0.8759 * voltSD - 0.0843);
-  //   } else {
-  //     adjusted = tempCompensation + (-42.672 * voltSD * voltSD + 9.4514 * voltSD - 0.5258);
-  //   }
-
-  //   if (adjusted < 0)
-  //     adjusted = 0;
-  //   return adjusted;
-  // }
-*/
-
-//Returns voltage of solar cell in centi-volts (battery load may affect voltage)
+//Returns voltage of solar cell in volts (battery load may affect voltage)
 float GetVSolar() {
   //unsigned int GetVSolar() {
   pinMode(pin_solarVoltage, INPUT);
@@ -2398,37 +2010,6 @@ uint16_t GetISolar() {
   // NOTE: As needed, terms have been typecasted to uint32_t to avoid overflow for 2 byte integer.
   // Multiplied by 1000 for conversion from amperes to "milliamps".
 }
-/*
-  //Returns voltage of solar cell in volts (battery load may affect voltage)
-  float getSolarVoltage() {
-  //Add the following lines to header and setup function:
-  //  #define pin_solarVoltage    A5
-  //  #define ADC_REF_VOLTAGE     3.3
-  //  #define ADC_RESOLUTION      1024
-  //  pinMode(pin_solarVoltage, INPUT);
-
-  uint16_t rawSolarV;
-  rawSolarV = analogRead(pin_solarVoltage);
-  return (float)((ADC_REF_VOLTAGE * (float)rawSolarV / (float)ADC_RESOLUTION) * 2.0);   //multiplied by two because there is a voltage divider to keep the Arduino pin from getting 6+ volts from solar cell
-  }
-
-
-  //Returns short circuit current of PV cell in milliamperes (in effect gives the total available charging current of solar cell)
-  unsigned int getSolarCurrent() {
-  //Add the following lines to header and setup function:
-  //  #define pin_solarShort      A4
-  //  #define SOLAR_CALIB      1.0          //This will become a EEPROM constant that is set during factory config – for now just use 1.0
-  //  pinMode(pin_solarShort, OUTPUT);
-
-  float solarV;
-  digitalWrite(pin_solarShort, HIGH);   //this "shorts" solar cell through a 1 Ohm resisitor
-  delay(150);                           //wait to settle -- if this delay is too short the current reading will be high
-  solarV = getSolarVoltage();           //read voltage of shorted solar cell
-  digitalWrite(pin_solarShort, LOW);    //clear short
-  return (uint16_t)((solarV / (SOLAR_CALIB)) * 1000);
-  //return (uint16_t)((solarV / (SOLAR_CALIB + getMOSFETresistance((float)RTC.temperature()/4.0, solarV))) * 1000);         //solar current is voltage / resistance (which is 1 Ohm in this case); multiply by 1000 to convert to milliamperes
-  }
-*/
 
 //======================================================================================
 //======================================================================================
@@ -2441,6 +2022,17 @@ void MainMenu()
   if (Serial.available() > 0) {
     Serial.read();       // clear serial input buffer
   }
+  uint8_t loraKey;
+  uint8_t cellKey;
+  PCAL6416* RadioDetect = new PCAL6416(false);
+  if (RadioDetect->begin(true)) {
+    RadioCardID_t radioType = RadioDetect->readID();
+    loraKey = radioType.LoRa;
+    cellKey = radioType.Cell;
+  } else {
+    Serial.println("Could not detect radio!");
+  }
+  delete RadioDetect;  
 
   //--- fill in data filename
   
@@ -2485,7 +2077,9 @@ void MainMenu()
   Serial.print(F("Serial Number: "));
   Serial.println(serNum);
   Serial.print(F("LoRa Radio Freq (MHz): "));
-  Serial.println(LoRaFREQ);
+  Serial.println(loraKey);
+  Serial.print(F("Cellular Module: "));
+  Serial.println(cellKey);
   Serial.print(F("Project ID: "));
   Serial.println(projectID);
   Serial.print(F("Gateway Radio ID: "));
@@ -2558,31 +2152,13 @@ void MainMenu()
   }
 
   Serial.println();
-  /* Serial.println(F("Menu options "));
-    Serial.println(F("   1  <--  Cellular Signal Scouting Mode")); // 06Aug20
-    Serial.println(F("   0  <--  Enter configuration string"));    // 25-Feb-2020: enter config info all at once
-    Serial.println(F("   c  <--  Set clock to NIST time"));    // set clock to NIST time
-    Serial.println(F("   i  <--  Enter project ID"));                      // set siteID
-    Serial.println(F("   g  <--  Change Gateway radio ID"));
-    Serial.println(F("   d  <--  Enter Hologram Device Key"));
-    Serial.println(F("   n  <--  Enter Node radio IDs"));
-    Serial.println(F("   u  <--  Set data upload to cloud interval"));
-    Serial.println(F("   m  <--  Set measurement interval"));
-    //  Serial.println(F("   S  <--  Synchronize Gateway & Node clocks"));
-    Serial.println(F("   f  <--  See list of saved files"));
-    //  Serial.println(F("   s  <--  See sensor list"));
-    Serial.println(F("   p  <--  Print node data to screen"));
-    Serial.println(F("   e  <--  Erase microSD card"));
-    Serial.println(F("   x  <--  Exit menu"));            // exit
-  */
   Serial.println(F("User Options:"));
   if(!forceRecv) Serial.println(F("  1  <--  Cellular Signal Scouting Mode")); // 06Aug20
-  
   Serial.println(F("  p  <--  Print node data to screen"));
   Serial.println(F("  r  <--  Receiver Mode on/off"));
   Serial.println(F("  f  <--  See list of saved files")); 
   Serial.println(F("  o  <--  Debug statements on/off"));
-  if(!forceRecv) Serial.println(F("  4  <--  Clear forbidden networks list"));
+
   if(!viewConfig){ 
     Serial.println(F("  2  <--  Show configuration options"));
   } else {
@@ -2610,7 +2186,7 @@ void MainMenu()
   Serial.print(F("Enter choice: "));
   Serial.flush();
 
-  timeout = millis() + 60000;                         // wait 30 secs for input
+  timeout = millis() + 60000;                         // wait 60 secs for input
   while (millis() < timeout)
   {
     menuinput = 120;
@@ -2673,18 +2249,18 @@ void MainMenu()
       MainMenu();
       break;
 
-
-
     case 103: case 71:         // ---------- g - Enter Gateway radio ID ---------------------------------------------------
       Serial.println();
       changeDefault();
-
+      Serial.println();
+      
       MainMenu();
       break;
 
     case 100: case 68:         // ---------- d - Enter Hologram Device Key ---------------------------------------------------
       Serial.println();
       devKey();
+      Serial.println();
 
       MainMenu();
       break;
@@ -2692,13 +2268,15 @@ void MainMenu()
     case 110: case 78:         // ---------- n - Enter Node radio IDs ---------------------------------------------------
       Serial.println();
       nodeIDs();
-
+      Serial.println();
+      
       MainMenu();                                      // go back to menu
       break;
 
     case 117:   // ------ u - Set upload interval ---------------------------------------------
       Serial.println();
       uploadInterval();
+      Serial.println();
       MainMenu();
       break;
 
@@ -2708,19 +2286,10 @@ void MainMenu()
 //        Serial.println(F("ERROR: upload interval must be entered first. Returning to menu..."));
 //      }
       measureInt();
-      delay(500);
-      MainMenu();
-      break;
-
-    /*case 83:    // ------ S -Synchronize G & N clocks ---------------------------------------------
       Serial.println();
-      Serial.println(F("Make sure same Node menu option open in another Serial Monitor window"));
-      Serial.println(F("Sending time to Node..."));
-      syncTime();
       delay(500);
       MainMenu();
       break;
-    */
 
     case 102: case 70:          // ------ f - See list of saved files ---------------------------------------------
       Serial.println();
@@ -2759,7 +2328,6 @@ void MainMenu()
       
       MainMenu();
       break;
-
 
     case 101: case 69:         // ------ e - Erase SD card ---------------------------------------------
       Serial.println();
@@ -2828,27 +2396,12 @@ void MainMenu()
       delay(500);
       MainMenu();
       break;
-      
-    case '4':        // ------ 4 - Clear forbidden networks ---------------------------------------------
-      Serial.println(F("!!! USE WITH CAUTION !!!"));
-      Serial.print(F("Are you sure you want to clear the FPLMN? y/n: "));
-      charinput();
-      if (charInput[0] == 'y' || charInput[0] == 'Y') {
-        clearFPLMN();
-      } else {
-        delay(1000);
-      }
-      Serial.println();
-      delay(500);
-      MainMenu();
-      break;  
-      
+           
     case 120: case 88:         // ------ x - Exit ---------------------------------------------
       Serial.println(F("Exit"));                           // exit
       Serial.println();
       delay(10);
       break;                                       // exit switch(case) routine
-
 
     case 'i': case 'I':        // ------ i - Set Project ID ---------------------------------------------
       Serial.println();
@@ -2897,8 +2450,7 @@ void MainMenu()
         Serial.println(F("  Receiver Mode deactivated"));
         uploadInterval();
       }
-      
-      
+           
       EEPROM.update(EEPROM_FORCERECV, forceRecv);
       Serial.println();
       delay(500);
@@ -2906,7 +2458,6 @@ void MainMenu()
        MainMenu();
        break;
   }
-  
 
   Serial.println(F("Exit"));                       // exit
   Serial.println();
@@ -3275,7 +2826,7 @@ void measureInt() {
 void NISTsync() {
   if(sim_detect){
     Serial.println(F("Synchronizing clock to NIST server ... "));
-    fonaOn();
+    pwr_cellular(1);
     delay(3000);
     timeSuccess = NISTtime();
     if (timeSuccess == false) {
@@ -3309,7 +2860,7 @@ void NISTsync() {
     } else if (!clockMenu) {
       sendNIST();
       delay(1000);
-      fonaOff();
+      pwr_cellular(0);
       delay(1000);
     }
   }
@@ -3508,39 +3059,48 @@ void rm(File dir, String tempPath) {
 
 void scoutMode() {  // 06Aug20
   Serial.println(F("Turning cell module on..."));
-  fonaOn();
-
-  if (fonaON) {
-    if (gStatus == 1) {
+  bool cellOn = pwr_cellular(1);
+//  n = cellRad.getNetworkStatus();
+  
+  if (cellOn) {
+    if (n == 5) {
       Serial.println(F("Enter 'x' at any time to stop"));
       while (Serial.read() != 'x') {
 
-        uint8_t rssi = fona.getRSSI();
+        int8_t dBm = cellRad.getRSSIdBm();
         //    Serial.println(response);
 
-        // getRSSI() sends AT+CSQ Query Signal quality command:
+        // AT+CSQ Query Signal quality command:
         // returns <rssi>,<ber>
         // <rssi> = received signal strength indication
-        // 0      --> -113 dBm or less
+        // 0      --> -115 dBm or less
         // 1      --> -111 dBm
-        // 2...30 --> -109...-53 dBm
-        // 31     --> -51 dBm or greater
+        // 2...30 --> -110...-54 dBm
+        // 31     --> -52 dBm or greater
         // 99     --> not known or not detectable
         // <ber> = channel bit error rate
 
         //        String rssi = response.substring(response.length()-2);
         //        int rssiNum = rssi.toInt();
-        uint8_t dBm = 113 - 2 * rssi;
-        Serial.print(F("RSSI (dBm): -"));
+//        uint8_t dBm = 113 - 2 * rssi;
+        Serial.print(F("RSSI (dBm): "));
         Serial.print(dBm);
-
-        if (dBm < 70) {
+       
+        // LTE rssi ratings (from Khan, et al. 2019 Table 2)
+        // Module in CAT-M1 system mode (not NB-IoT)
+        // > -65      dBm EXCELLENT
+        // -65 to -75 dBm GOOD
+        // -75 to -85 dBm FAIR
+        // -85 to -95 dBm POOR
+        // < -95      dBm DISCONNECT --> leave as poor bc module will return lower values while still connected
+               
+        if (dBm >= -65) {
           Serial.println("  EXCELLENT");
-        } else if (dBm > 70 && dBm <= 85) {
+        } else if (dBm < -65 && dBm >= -75) {
           Serial.println("  GOOD");
-        } else if (dBm > 85 && dBm <= 100) {
+        } else if (dBm < -75 && dBm >= -85) {
           Serial.println("  FAIR");
-        } else if (dBm == 99) {
+        } else if (dBm == -99) {
           Serial.println("  UNKNOWN");
         } else {
           Serial.println("  POOR");
@@ -3548,8 +3108,9 @@ void scoutMode() {  // 06Aug20
         delay(1000);
       }
       Serial.println(F("Turning cell module off..."));
-      fonaOff();
-    } else {
+      pwr_cellular(0);
+    } 
+    else {
       Serial.println("ERROR: could not connect to network");
     }
   } else {
@@ -3557,167 +3118,61 @@ void scoutMode() {  // 06Aug20
   }
 }
 
-void getFreeRAM() {
-  extern uint16_t __heap_start, *__brkval;
-  uint16_t v;
-  uint16_t freeRAM;
-  freeRAM = (uint16_t)&v - (__brkval == 0 ? (uint16_t) &__heap_start : (uint16_t) __brkval);
-  Serial.print("Free RAM: ");
-  Serial.print(freeRAM);
-  Serial.print(',');
-}
-
-void checkTimeout() {
-  Serial.println();
-  Serial.println("Checking timeouts: ");
-
-  char check[] = "AT+CIPTIMEOUT?";
-  answer = sendATcommand(check, "+CIPTIMEOUT: ", 20000);
-  delay(100);
-}
-
-void changeTimeout() {
-  //  Serial.println();
-  //  Serial.println("Changing timeouts: ");
-
-  char change[] = "AT+CIPTIMEOUT=120000,10000,10000";  // 21Jun21: change netopen timeout to default 120000 ms
-  answer = sendATcommand(change, "OK", 20000);
-  delay(100);
-}
-
-void clearFPLMN() {
-  fonaOn_noGPRS();
-
-  Serial.println();
-  Serial.println(F("Checking FPLMN..."));
-
-  char crsm[] = "AT+CRSM=176,28539,0,0,12";     // check first for any forbidden networks
-  Serial.print(">> ");
-  Serial.println(crsm);
-  answer = sendATcommand(crsm, "+CRSM: 144,0,\"FFFFFFFFFFFFFFFFFFFFFFFF\"", 30000);
-  delay(1000);
-  //  Serial.println(answer);
-  if (answer == 0) {
-    Serial.println("Clearing FPLMN...");
-    char cfun0[] = "AT+CFUN=0";    // set module to minimum functionality
-    Serial.print(">> ");
-    Serial.println(cfun0);
-    answer = sendATcommand(cfun0, "OK", 30000);
-
-    char crsm_reset[] = "AT+CRSM=214,28539,0,0,12,\"FFFFFFFFFFFFFFFFFFFFFFFF\"";    // set module to minimum functionality
-    Serial.print(">> ");
-    Serial.println(crsm_reset);
-    answer = sendATcommand(crsm_reset, "OK", 30000);
-
-    char cfun1[] = "AT+CFUN=1";    // reset module to full functionality
-    Serial.print(">> ");
-    Serial.println(cfun1);
-    answer = sendATcommand(cfun1, "OK", 30000);
-    delay(1000);
-
-  } else {
-    Serial.println("No forbidden networks. Returning to menu.");
-  }
-
-  fonaOff_noGPRS();
-  delay(1000);
-
-}
-
-/*
-void getNetworkStatFull() {
-
-  Serial.println("get full Network status");
-
-  char nstat[] = "AT+CPSI?";
-  unsigned long timeout = 10000;
-  uint8_t x = 0;
-  unsigned long previous;
-
-  memset(response, '\0', 100);    // Initialize the string
-
-  delay(100);
-
-  while ( Serial1.available() > 0) Serial1.read();   // Clean the input buffer
-  Serial1.println(nstat);    // Send the AT command
-
-  x = 0;
-  previous = millis();
-
-  // this loop waits for the answer
-  do {
-    if (Serial1.available() != 0) {
-      if (x == 100)
-      {
-        strncpy(response, response + 1, 99);
-        response[99] = Serial1.read();
-      }
-      else
-      {
-        response[x] = Serial1.read();
-        Serial.print(response[x]);
-        x++;
-      }
-    }
-    // Waits for the asnwer with time out
-  }
-
-  while (((millis() - previous) < timeout));
-
-  delay(50);
-  Serial.println(response);
-  delay(50);
-
-}
-*/
 //======================================================================================
 
-//--------------- Initialize Fona (SIM5320) ------------------------------------------------------
+//--------------- Decode LoRa and cellular radio types ---------------------------------
 
-void fonaOn_noGPRS() {
-  Serial.println();
-  Serial.println("fonaOn(): Turning FONA on...");
-  unsigned long pTimeout = millis();// 15-Jan-2020: + 10000;
-
-  while ((digitalRead(Fona_PS) == LOW) && ((millis() - pTimeout) < 10000)) { // SHOULD BE IF?
-    toggle();
-    delay(2000);
+void printLoraFreq(uint8_t lorakey){
+  // LoRa types
+  if (lorakey == 0){
+    Serial.println("Not installed");
+  } 
+  else if (lorakey == 1){
+    Serial.println("915");
   }
-
-  if (digitalRead(Fona_PS) == HIGH) {
-    fonaSerial->begin(4800);
-
-    if (! fona.begin(*fonaSerial)) { // turn on cell module
-      if (! fona.begin(*fonaSerial)) {    // try again
-      }
-      else {
-        fonaON = true;
-      }
-    }
-    else { // all is good
-      fonaON = true;
-    }
-
-    delay(100);
+  else if (lorakey == 2){
+    Serial.println("868");
   }
-  else {
-    fonaON = false;
-    Serial.println("ERROR: FONA failed to turn on");
+  else if (lorakey == 3){
+    Serial.println("433");
   }
-
+  else if (lorakey == 4){
+    Serial.println("472");
+  }
 }
 
-//======================================================================================
+void printCellType(uint8_t cellkey){
+    // Cellular types
+  if (cellkey == 0){
+    Serial.println("Not installed");
+  } 
+  else if (cellkey == 1){
+    Serial.println("SIM5320A");
+  }
+  else if (cellkey == 2){
+    Serial.println("SIM5320E");
+  }
+  else if (cellkey == 3){
+    Serial.println("SIM5320J");
+  }
+  else if (cellkey == 4){
+    Serial.println("SIM7070G");
+  }
+}
 
-//--------------- Turn Fona off --------------------------------------------------------
-
-void fonaOff_noGPRS() {
-
-  delay(500);
-  Serial.println();
-  Serial.println("fonaOff(): Turning FONA off...");
-  fonaSerial ->end();
-
-  delay(1000);
-
+void getModemRX(uint8_t rxCnt, uint16_t unreadCnt) {
+  if (printCMRX > 0) {
+    char* buf;
+    uint16_t len;
+    //Serial.print(cellRad.dumpRXBuff());    
+    len = cellRad.getRX(unreadCnt, &buf);
+    while (len > 0) {
+      if (buf[rxCnt-len] == 0)
+        break;
+      Serial.print(buf[rxCnt-len]);
+      len--;
+    }    
+//    strcat(buf, "");
+//    Serial.print(buf);  //TODO: this should print actual chars... fix later
+  }
 }
