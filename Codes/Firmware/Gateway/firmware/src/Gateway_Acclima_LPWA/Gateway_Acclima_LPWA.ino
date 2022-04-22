@@ -1450,7 +1450,7 @@ void sendDataSD() {
   pv[pvLen -1] = 0;
 
   String boxT = String(boxTemp);
-  uint8_t bTlen = boxT.length();
+  uint8_t bTlen = boxT.length() + 1;
   char bT[bTlen]; 
   boxT.toCharArray(bT,bTlen);
   bT[bTlen - 1] = 0;
@@ -1511,8 +1511,11 @@ void sendDataSD() {
       digits = 1;
     }
 
-    char rs_dbm[digits + 2];    // add length to total length of msg
-    itoa(dBm,rs_dbm,10);
+    String rs_dbm = String(dBm);
+    uint8_t dbm_len = rs_dbm.length() + 1;
+    char rssi[dbm_len];
+    rs_dbm.toCharArray(rssi,dbm_len);
+    rssi[dbm_len - 1] = 0;
     
     if (!SD.begin(SD_CS)) {}
     delay(20);
@@ -1530,13 +1533,15 @@ void sendDataSD() {
     uint16_t gData_len = sizeof(VERSION) + sizeof(projectID) + 8 + bvLen + bTlen + pvcLen + pvLen + sizeof(timeSave);   // have to do it again, previous one is out of scope
     char gData[gData_len];                           // array for Gateway data, compiled below
     sprintf(gData, "%s~%s~%lu~%s~%s~%s~%s~%s", VERSION, projectID, serNum, bv, bT, pvc, pv, timeSave); delay(20);
-//    Serial.println(gData);
+    if (debug) Serial.println(gData);
        
-    uint16_t gMsgLen = gData_len + 1 + sizeof(rs_dbm) + 8 + 47; //48; <-- DON'T INCLUDE NULL IN MSG
+    uint16_t gMsgLen = gData_len + dbm_len + 8 + 47; //48; <-- DON'T INCLUDE NULL IN MSG
     char gMsg[gMsgLen];
-    sprintf(gMsg,"{\"k\":\"%s\",\"d\":\"%s~%s\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}\r",devicekey, gData, rs_dbm, serNum);
-//    Serial.println(gMsg);  
-
+    sprintf(gMsg,"{\"k\":\"%s\",\"d\":\"%s~%s\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}\r",devicekey, gData, rssi, serNum);
+//    Serial.println(gMsg);
+//    Serial.println(gMsg[gMsgLen - 3],DEC);
+//    Serial.println(gMsg[gMsgLen - 2],DEC);  
+//    Serial.println(gMsg[gMsgLen - 1],DEC);
 
     //--- Open TCP socket and send data
     
@@ -1705,36 +1710,7 @@ void sendDataArray() {
   byte len1 = Timestamp.length() + 1;
   char timeSave[len1];
   Timestamp.toCharArray(timeSave, len1); delay(20);   // convert String to char array
-
-  uint16_t pvCurrent = GetISolar();   // using John's code
-  float pvVoltage = GetVSolar();
-  float boxTemp = getBoxT();    // added 14-Feb-2020
-
-    //--- Convert floats to arrays
-
-  String str_battV = String(battV);
-  uint8_t bvLen = str_battV.length() + 1;
-  char bv[bvLen];
-  str_battV.toCharArray(bv,bvLen);
-  bv[bvLen - 1] = 0;
-
-  String solarV = String(pvVoltage);
-  uint8_t pvLen = solarV.length() + 1;
-  char pv[pvLen];
-  solarV.toCharArray(pv,pvLen);
-  pv[pvLen -1] = 0;
-
-  String boxT = String(boxTemp);
-  uint8_t bTlen = boxT.length();
-  char bT[bTlen]; 
-  boxT.toCharArray(bT,bTlen);
-  bT[bTlen - 1] = 0;
-
-  String pvC = String(pvCurrent); 
-  uint8_t pvcLen = pvC.length() + 1;
-  char pvc[pvcLen];
-  pvC.toCharArray(pvc,pvcLen);
-  pvc[pvcLen - 1] = 0; 
+  timeSave[len1 - 1] = 0;
 
   int8_t dBm;
 
@@ -1743,7 +1719,40 @@ void sendDataArray() {
 
   if (gStatus == 1 && !recvMode) {
     if (debug) Serial.println("sendDataArray(): Sending data from array...");
+     
+     // Get metadata
+      uint16_t pvCurrent = GetISolar();   // using John's code
+      float pvVoltage = GetVSolar();
+      float boxTemp = getBoxT();    // added 14-Feb-2020
+            
+      //--- Convert floats to arrays
     
+      String str_battV = String(battV);
+      uint8_t bvLen = str_battV.length() + 1;
+      char bv[bvLen];
+      str_battV.toCharArray(bv,bvLen);
+      bv[bvLen - 1] = 0;
+            
+      String solarV = String(pvVoltage);
+      uint8_t pvLen = solarV.length() + 1;
+      char pv[pvLen];
+      solarV.toCharArray(pv,pvLen);
+      pv[pvLen - 1] = 0;
+            
+      String boxT = String(boxTemp);
+      uint8_t bTlen = boxT.length() + 1;
+      char bT[bTlen]; 
+      boxT.toCharArray(bT,bTlen);
+      bT[bTlen - 1] = 0;
+
+      String pvC = String(pvCurrent); 
+      uint8_t pvcLen = pvC.length() + 1;
+      char pvc[pvcLen];
+      pvC.toCharArray(pvc,pvcLen);
+      pvc[pvcLen - 1] = 0; 
+
+      delay(100);
+
     //--- Get RSSI
     
     dBm = cellRad.getRSSIdBm();
@@ -1758,20 +1767,26 @@ void sendDataArray() {
       digits = 1;
     }
 
-    char rs_dbm[digits + 2];    // add length to total length of msg
-    itoa(dBm,rs_dbm,10);
+    String rs_dbm = String(dBm);
+    uint8_t dbm_len = rs_dbm.length() + 1;
+    char rssi[dbm_len];
+    rs_dbm.toCharArray(rssi,dbm_len);
+    rssi[dbm_len - 1] = 0;
    
     //--- Compile gData message
     
     uint16_t gData_len = sizeof(VERSION) + sizeof(projectID) + 8 + bvLen + bTlen + pvcLen + pvLen + sizeof(timeSave);   // have to do it again, previous one is out of scope
     char gData[gData_len];                           // array for Gateway data, compiled below
-    sprintf(gData, "%s~%s~%lu~%s~%s~%s~%s~%s", VERSION, projectID, serNum, bv, bT, pvc, pv, timeSave); delay(20);
-       
-    uint16_t gMsgLen = gData_len + 1 + sizeof(rs_dbm) + 8 + 46; //47; //48; <-- DON'T INCLUDE NULL IN MSG
+    sprintf(gData, "%s~%s~%lu~%s~%s~%s~%s~%s", VERSION, projectID, serNum, bv, bT, pvc, pv, timeSave); delay(100);
+//       Serial.println(gData);
+
+    uint16_t gMsgLen = gData_len + 1 + dbm_len + 8 + 46; //47; //48; <-- DON'T INCLUDE NULL IN MSG
     char gMsg[gMsgLen];
-    sprintf(gMsg,"{\"k\":\"%s\",\"d\":\"%s~%s\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}\r",devicekey, gData, rs_dbm, serNum);
+    sprintf(gMsg,"{\"k\":\"%s\",\"d\":\"%s~%s\",\"t\":[\"%lu\",\"GATEWAY_DATA\"]}\r",devicekey, gData, rssi, serNum);
+//    Serial.println(gMsg);
     delay(60);
 
+    
     //--- Open TCP socket and send data
     
     uint16_t IPlen = sizeof(hologramIP);
