@@ -331,9 +331,6 @@ void setup()
   pinMode(SD_CS, OUTPUT);                         // set ChipSelect pin as output
   pinMode(hardSS, OUTPUT);
   digitalWrite(hardSS, HIGH);
-//  pinMode(Fona_Key, OUTPUT);
-//  digitalWrite(Fona_Key, HIGH);                   // set HIGH so toggle() works
-//  pinMode(Fona_PS, INPUT);                        // input; reads HIGH or LOW
   pinMode(BattV, INPUT);                          // reads A0 to calculate SLA battery V
   pinMode(pin_solarVoltage, INPUT);
   pinMode(pin_solarShort, OUTPUT);
@@ -2261,6 +2258,7 @@ void MainMenu()
       clockMenu = true;
       NISTsync();
       clockMenu = false;
+      
       MainMenu();
       break;
 
@@ -2292,6 +2290,7 @@ void MainMenu()
       Serial.println();
       uploadInterval();
       Serial.println();
+      
       MainMenu();
       break;
 
@@ -2303,6 +2302,7 @@ void MainMenu()
       measureInt();
       Serial.println();
       delay(500);
+      
       MainMenu();
       break;
 
@@ -2319,6 +2319,7 @@ void MainMenu()
       printDirectory(root, 0);
       Serial.println();
       delay(500);
+      
       MainMenu();
       break;
 
