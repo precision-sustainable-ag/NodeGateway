@@ -33,7 +33,7 @@
    Justin Ayres, Univeristy of Maryland Computer Science Department
    John Anderson, Acclima Inc.
 
-   Last edited: April 20, 2022
+   Last edited: June 23, 2022
 
    - Version History -
 
@@ -79,6 +79,7 @@
    Version 2022.04.20 Replace Adafruit_FONA.h with SIMCOM_7070G.h
                       Edit cellular functions to be capatible with SIM7070G LPWA module:
                       sendInit, NISTtime, sendNIST, sendDataSD, sendDataArray, scoutMode
+   Version 2022.06.23 Print Lora freq and cell type in menu header instead of code    
 
 */
 
@@ -125,7 +126,7 @@
 
 // ------- Declare Variables -----------------------------------------------
 
-char VERSION[] = "V2022.04.20";
+char VERSION[] = "V2022.06.23";
 
 //-----*** Site/Gateway Identifier ***-----
 
@@ -2089,9 +2090,11 @@ void MainMenu()
   Serial.print(F("Serial Number: "));
   Serial.println(serNum);
   Serial.print(F("LoRa Radio Freq (MHz): "));
-  Serial.println(loraKey);
+  printLoraFreq(loraKey);
+//  Serial.println(loraKey);
   Serial.print(F("Cellular Module: "));
-  Serial.println(cellKey);
+  printCellType(cellKey);
+//  Serial.println(cellKey);
   Serial.print(F("Project ID: "));
   Serial.println(projectID);
   Serial.print(F("Gateway Radio ID: "));
