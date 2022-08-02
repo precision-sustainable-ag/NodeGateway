@@ -657,7 +657,7 @@ void SD_on() {
 
 //======================================================================================
 
-//---------- Sync time with Nodes after field install, get sensor lists ----------------
+//---------- Sync time with Nodes after field install ----------------
 
 void fieldSync() {
 
